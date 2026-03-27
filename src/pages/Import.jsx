@@ -298,13 +298,13 @@ export default function ImportPage() {
         if (!company) return null;
         let contact2=get('contact'); if(isApollo&&mapping['_firstname']!==undefined){const fn=String(row[mapping['_firstname']]||'').trim();const ln=String(row[mapping['_lastname']]||'').trim();contact2=(fn+' '+ln).trim()||contact2;} const phone=get('phone').replace(/^'+/,'').trim(),contact=contact2,email=get('email'),linkedin=get('linkedin'),role=get('role');
         return {
-          company, contact:contact||null, role:role||null,
-          country:get('country')||null, city:get('city')||null,
-          email:email||null, phone:phone||null,
-          linkedin:linkedin||null, website:get('website')||null,
-          industry:get('industry')||null, source:get('source')||null,
-          tier:calcTier({email,phone,contact,role,linkedin}),
-          products:[], imported_at:new Date().toISOString(), last_synced:new Date().toISOString(),
+          company,
+          country: normalizeCountry(get('country')),
+          city:    get('city')||null,
+          website: get('website')||null,
+          industry:get('industry')||null,
+          source:  get('source')||null,
+          status:  'prospect',
         };
       }).filter(Boolean);
 
