@@ -137,33 +137,92 @@ function ContactModal({ contact, clientId, onClose, onSave }) {
 
 function ImportModal({ onClose, onDone }) {
   const fileRef = useRef();
-  const [step, setStep] = useState(1);
-  const [rows, setRows] = useState([]);
+  const [step,      setStep]      = useState(1);
+  const [mode,      setMode]      = useState('contacts'); // 'clients' | 'contacts'
+  const [rows,      setRows]      = useState([]);
+  const [headers,   setHeaders]   = useState([]);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState(null);
+  const [result,    setResult]    = useState(null);
+
+  function isApollo(hdrs) {
+    const j = hdrs.join(',').toLowerCase();
+    return j.includes('apollo contact id') || j.includes('person linkedin url') || j.includes('first name');
+  }
+
+  function parseCSV(str) {
+    const results = [];
+    const lines = str.replace(/\r/g, '').split('\n');
+    for (let li=0; li<lines.length; li++) {
+      const line = lines[li];
+      if (!line.trim()) continue;
+      const row = []; let inQ=false, cell='';
+      for (let i=0; i<line.length; i++) {
+        const ch=line[i];
+        if (ch==='"') { if(inQ&&line[i+1]==='"'){cell+='"';i++;}else inQ=!inQ; }
+        else if (ch===','&&!inQ) { row.push(cell.trim()); cell=''; }
+        else cell+=ch;
+      }
+      row.push(cell.trim());
+      results.push(row);
+    }
+    return results;
+  }
 
   async function handleFile(f) {
     if (!f) return;
     try {
-      const buf = await f.arrayBuffer();
-      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
-      const wb = XLSX.read(buf, {type:'array'});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws, {header:1});
-      const hdrs = data[0].map(h=>String(h||'').toLowerCase().trim());
-      const parsed = data.slice(1).filter(r=>r.some(Boolean)).map(r=>{
-        const get = (...keys) => { for(const k of keys){ const i=hdrs.findIndex(h=>h.includes(k)); if(i>=0&&r[i]) return String(r[i]).trim(); } return ''; };
-        return {
-          company: get('company','organisation','account') || '',
-          industry: get('industry','sector') || null,
-          website: get('website','domain','web') || null,
-          country: get('country') || null,
-          city: get('city') || null,
-          source: get('source') || null,
+      let hdrs=[], allRows=[];
+      const ext = f.name.split('.').pop().toLowerCase();
+      if (ext==='csv') {
+        const parsed = parseCSV(await f.text());
+        hdrs = parsed[0].map(h=>h.replace(/^"+|"+$/g,'').trim());
+        allRows = parsed.slice(1).map(r=>r.map(v=>v.replace(/^"+|"+$/g,'').trim()));
+      } else {
+        const buf = await f.arrayBuffer();
+        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+        const wb = XLSX.read(buf,{type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws,{header:1});
+        hdrs = data[0].map(h=>String(h||'').trim());
+        allRows = data.slice(1).map(r=>hdrs.map((_,i)=>String(r[i]||'').trim()));
+      }
+      setHeaders(hdrs);
+      const apollo = isApollo(hdrs);
+      const detectedMode = apollo ? 'contacts' : 'clients';
+      setMode(detectedMode);
+
+      if (apollo) {
+        // Apollo contacts import
+        const parsed = allRows.filter(r=>r.some(Boolean)).map(r=>{
+          const get = (exact) => { const i=hdrs.findIndex(h=>h.toLowerCase()===exact.toLowerCase()); return i>=0?String(r[i]||'').trim():''; };
+          const fn=get('First Name'), ln=get('Last Name');
+          const phone=(get('First Phone')||get('Work Direct Phone')||get('Corporate Phone')).replace(/^'+/,'');
+          return {
+            name: (fn+' '+ln).trim() || null,
+            role: get('Title')||null,
+            email: get('Email')||null,
+            phone: phone||null,
+            linkedin: get('Person Linkedin Url')||null,
+            _company: get('Company')||null,
+            _country: get('Country')||null,
+          };
+        }).filter(r=>r.name||r.email);
+        setRows(parsed);
+      } else {
+        // Company list import
+        const hl = hdrs.map(h=>h.toLowerCase());
+        const get = (row,...keys) => { for(const k of keys){ const i=hl.findIndex(h=>h.includes(k)); if(i>=0&&row[i]) return String(row[i]).trim(); } return ''; };
+        const parsed = allRows.filter(r=>r.some(Boolean)).map(r=>({
+          company: get(r,'company','organisation','account')||'',
+          industry: get(r,'industry','sector')||null,
+          website: get(r,'website','domain')||null,
+          country: get(r,'country')||null,
+          city: get(r,'city')||null,
+          source: get(r,'source')||null,
           status: 'prospect',
-        };
-      }).filter(r=>r.company);
-      setRows(parsed);
+        })).filter(r=>r.company);
+        setRows(parsed);
+      }
       setStep(2);
     } catch(e) { alert('Error reading file: '+e.message); }
   }
@@ -171,54 +230,99 @@ function ImportModal({ onClose, onDone }) {
   async function doImport() {
     setImporting(true);
     let imported=0, errors=0;
-    const BATCH=50;
-    for(let i=0;i<rows.length;i+=BATCH){
-      const batch=rows.slice(i,i+BATCH);
-      try{
-        const {error}=await supabase.from('clients').insert(batch);
-        if(error){errors+=batch.length;}else{imported+=batch.length;}
-      }catch(e){errors+=batch.length;}
-      await new Promise(r=>setTimeout(r,60));
+
+    if (mode==='contacts') {
+      // For each contact, find or create the client, then insert contact
+      const companyMap = {};
+      // Load existing clients
+      const {data:existing} = await supabase.from('clients').select('id,company');
+      (existing||[]).forEach(c=>{ companyMap[c.company.toLowerCase().trim()] = c.id; });
+
+      for (const row of rows) {
+        try {
+          const {name,role,email,phone,linkedin,_company,_country} = row;
+          let clientId = null;
+          if (_company) {
+            const key = _company.toLowerCase().trim();
+            if (companyMap[key]) {
+              clientId = companyMap[key];
+            } else {
+              // Create new client
+              const {data:newClient} = await supabase.from('clients')
+                .insert({company:_company, country:_country||null, status:'prospect'})
+                .select().single();
+              if (newClient) { clientId=newClient.id; companyMap[key]=newClient.id; }
+            }
+          }
+          if (name||email) {
+            await supabase.from('contacts').insert({client_id:clientId, name:name||email, role, email, phone, linkedin, is_primary:false});
+            imported++;
+          }
+        } catch(e) { errors++; }
+        await new Promise(r=>setTimeout(r,20));
+      }
+    } else {
+      const BATCH=50;
+      for(let i=0;i<rows.length;i+=BATCH){
+        const batch=rows.slice(i,i+BATCH);
+        try{ const {error}=await supabase.from('clients').insert(batch); if(error){errors+=batch.length;}else{imported+=batch.length;} }
+        catch(e){errors+=batch.length;}
+        await new Promise(r=>setTimeout(r,60));
+      }
     }
-    setResult({imported,errors});
+
+    setResult({imported,errors,mode});
     setImporting(false);
     setStep(3);
   }
 
+  const previewCols = mode==='contacts'
+    ? ['name','role','email','phone','_company']
+    : ['company','country','industry'];
+
   return (
-    <Modal title="Import clients" onClose={onClose} width={520}>
+    <Modal title="Import" onClose={onClose} width={560}>
       {step===1&&(
         <div>
-          <div style={{background:'#F8FAFC',border:'1px solid #E4E8F0',borderRadius:9,padding:12,marginBottom:14,fontSize:11,color:'#64748B'}}>
-            Upload an Excel or CSV file. Required column: <strong>Company</strong>. Optional: Industry, Website, Country, City, Source.
+          <div style={{display:'flex',gap:8,marginBottom:14}}>
+            <div onClick={()=>setMode('contacts')} style={{flex:1,padding:'12px',background:mode==='contacts'?'#EFF6FF':'#fff',border:'1px solid '+(mode==='contacts'?'#0D1F3C':'#E4E8F0'),borderRadius:9,cursor:'pointer',textAlign:'center'}}>
+              <div style={{fontSize:20,marginBottom:4}}>👤</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#0D1F3C'}}>Contacts</div>
+              <div style={{fontSize:10,color:'#64748B'}}>Apollo CSV with names & emails</div>
+            </div>
+            <div onClick={()=>setMode('clients')} style={{flex:1,padding:'12px',background:mode==='clients'?'#EFF6FF':'#fff',border:'1px solid '+(mode==='clients'?'#0D1F3C':'#E4E8F0'),borderRadius:9,cursor:'pointer',textAlign:'center'}}>
+              <div style={{fontSize:20,marginBottom:4}}>🏢</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#0D1F3C'}}>Companies</div>
+              <div style={{fontSize:10,color:'#64748B'}}>List of company names</div>
+            </div>
           </div>
-          <div style={{border:'2px dashed #D0D7E5',borderRadius:10,padding:36,textAlign:'center',cursor:'pointer'}} onClick={()=>fileRef.current.click()}>
+          <div style={{border:'2px dashed #D0D7E5',borderRadius:10,padding:32,textAlign:'center',cursor:'pointer'}} onClick={()=>fileRef.current.click()}>
             <div style={{fontSize:28,marginBottom:8}}>↑</div>
             <div style={{fontSize:13,fontWeight:700,color:'#0D1F3C',marginBottom:4}}>Drop your file here</div>
-            <div style={{fontSize:11,color:'#64748B'}}>Excel (.xlsx) or CSV</div>
+            <div style={{fontSize:11,color:'#64748B'}}>Excel (.xlsx) or CSV — auto-detected</div>
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
           </div>
         </div>
       )}
       {step===2&&(
         <div>
-          <div style={{fontSize:13,color:'#0D1F3C',marginBottom:12,fontWeight:600}}>{rows.length} clients ready to import</div>
-          <div style={{maxHeight:240,overflowY:'auto',border:'1px solid #E4E8F0',borderRadius:8,marginBottom:16}}>
+          <div style={{background:'#F8FAFC',border:'1px solid #E4E8F0',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12}}>
+            <strong>{rows.length}</strong> {mode==='contacts'?'contacts':'companies'} detected · importing as <strong>{mode==='contacts'?'Contacts (linked to clients)':'Companies'}</strong>
+          </div>
+          <div style={{maxHeight:240,overflowY:'auto',border:'1px solid #E4E8F0',borderRadius:8,marginBottom:14}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-              <thead><tr>{['Company','Country','Industry'].map(h=><th key={h} style={{padding:'6px 10px',background:'#F8FAFC',borderBottom:'1px solid #E4E8F0',textAlign:'left',fontSize:9,textTransform:'uppercase',color:'#64748B',fontWeight:600}}>{h}</th>)}</tr></thead>
-              <tbody>{rows.slice(0,10).map((r,i)=>(
-                <tr key={i}>
-                  <td style={{padding:'6px 10px',borderBottom:'1px solid #F1F5F9',fontWeight:600}}>{r.company}</td>
-                  <td style={{padding:'6px 10px',borderBottom:'1px solid #F1F5F9',color:'#64748B'}}>{r.country||'—'}</td>
-                  <td style={{padding:'6px 10px',borderBottom:'1px solid #F1F5F9',color:'#64748B'}}>{r.industry||'—'}</td>
-                </tr>
+              <thead><tr>{previewCols.map(h=><th key={h} style={{padding:'6px 10px',background:'#F8FAFC',borderBottom:'1px solid #E4E8F0',textAlign:'left',fontSize:9,textTransform:'uppercase',color:'#64748B',fontWeight:600}}>{h.replace('_','')}</th>)}</tr></thead>
+              <tbody>{rows.slice(0,8).map((r,i)=>(
+                <tr key={i}>{previewCols.map(col=>(
+                  <td key={col} style={{padding:'6px 10px',borderBottom:'1px solid #F1F5F9',color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>{r[col]||'—'}</td>
+                ))}</tr>
               ))}</tbody>
             </table>
-            {rows.length>10&&<div style={{padding:'8px 10px',fontSize:11,color:'#94A3B8',textAlign:'center'}}>...and {rows.length-10} more</div>}
+            {rows.length>8&&<div style={{padding:'6px 10px',fontSize:11,color:'#94A3B8',textAlign:'center'}}>...and {rows.length-8} more</div>}
           </div>
           <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
             <Btn variant="outline" onClick={()=>setStep(1)}>Back</Btn>
-            <Btn onClick={doImport} disabled={importing}>{importing?'Importing...':'Import '+rows.length+' clients'}</Btn>
+            <Btn onClick={doImport} disabled={importing}>{importing?'Importing...':'Import '+rows.length+(mode==='contacts'?' contacts':' companies')}</Btn>
           </div>
         </div>
       )}
@@ -226,8 +330,8 @@ function ImportModal({ onClose, onDone }) {
         <div style={{textAlign:'center',padding:24}}>
           <div style={{fontSize:36,marginBottom:12}}>✓</div>
           <div style={{fontSize:16,fontWeight:700,color:'#065F46',marginBottom:8}}>Import complete</div>
-          <div style={{fontSize:13,color:'#64748B',marginBottom:20}}>{result.imported} clients imported · {result.errors} errors</div>
-          <Btn onClick={()=>{onDone();onClose();}}>View Clients</Btn>
+          <div style={{fontSize:13,color:'#64748B',marginBottom:20}}>{result.imported} {result.mode==='contacts'?'contacts':'companies'} imported · {result.errors} errors</div>
+          <Btn onClick={()=>{onDone();onClose();}}>Done</Btn>
         </div>
       )}
     </Modal>
