@@ -1,0 +1,7 @@
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Raleway','Segoe UI',system-ui,sans-serif;background:#FAF6EE;color:#0D1F3C;font-size:13px;-webkit-font-smoothing:antialiased}
+button,select,input,textarea{font-family:'Raleway',system-ui,sans-serif;font-size:inherit}
+a{color:inherit}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#D0D7E5;border-radius:3px}
