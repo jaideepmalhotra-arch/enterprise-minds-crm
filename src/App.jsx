@@ -7,6 +7,7 @@ import PipelinePage  from './pages/Pipeline.jsx';
 import ClientsPage   from './pages/Clients.jsx';
 import TasksPage     from './pages/Tasks.jsx';
 import ActivityPage  from './pages/Activity.jsx';
+import ImportPage    from './pages/Import.jsx';
 
 const META = {
   '/em':           { title: 'Dashboard',     sub: 'Pipeline overview · tasks · recent activity' },
@@ -14,6 +15,7 @@ const META = {
   '/em/clients':   { title: 'Clients',       sub: 'Client database · contacts · history' },
   '/em/tasks':     { title: 'Tasks',         sub: 'Due today, overdue and upcoming' },
   '/em/activity':  { title: 'Activity feed', sub: 'All logged activities · last 30 days' },
+  '/em/import':    { title: 'Import',        sub: 'Upload Apollo, LinkedIn or CRM exports' },
 };
 
 function Topbar() {
@@ -45,6 +47,7 @@ function Layout() {
           <Route path="/em/clients"  element={<ClientsPage />} />
           <Route path="/em/tasks"    element={<TasksPage />} />
           <Route path="/em/activity" element={<ActivityPage />} />
+          <Route path="/em/import"    element={<ImportPage />} />
           <Route path="*"            element={<DashboardPage />} />
         </Routes>
       </main>
