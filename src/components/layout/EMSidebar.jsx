@@ -7,6 +7,7 @@ const NAV = [
   { section: 'SALES' },
   { to: '/em/pipeline',   label: 'Pipeline',       icon: '◫' },
   { to: '/em/clients',    label: 'Clients',        icon: '◉' },
+  { to: '/em/import',     label: 'Import',         icon: '↑' },
   { section: 'WORK' },
   { to: '/em/tasks',      label: 'Tasks',          icon: '✓' },
   { to: '/em/activity',   label: 'Activity feed',  icon: '◎' },
