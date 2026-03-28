@@ -16,6 +16,8 @@ const NAV = [
   { to: '/sales/tasks',      label: 'My Tasks',       icon: '✓' },
   { to: '/sales/activity',   label: 'Activity Feed',  icon: '◎' },
   { to: '/sales/dashboard',  label: 'Team Dashboard', icon: '⊞' },
+  { section: 'ADMIN' },
+  { to: '/sales/settings',   label: 'Settings',       icon: '⚙' },
 ];
 
 export default function SalesSidebar() {
