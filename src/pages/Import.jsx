@@ -344,7 +344,7 @@ export default function ImportPage() {
           linkedin: linkedin||null, website: get('website')||null,
           industry: get('industry')||null, source: get('source')||null,
           tier: calcTier({email, phone, contact, role, linkedin}),
-          products: [], imported_at: new Date().toISOString(), last_synced: new Date().toISOString(),
+          services: [], imported_at: new Date().toISOString(), last_synced: new Date().toISOString(),
         };
       }).filter(Boolean);
 
