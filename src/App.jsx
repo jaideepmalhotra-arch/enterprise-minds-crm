@@ -3,15 +3,14 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import SalesProvider from './data/SalesContext.jsx';
 import SalesSidebar from './components/layout/SalesSidebar.jsx';
 
-// Pages — import as needed, add placeholders for now
 import ContactsPage    from './pages/Contacts.jsx';
 import ImportPage      from './pages/Import.jsx';
 import EnrichmentPage  from './pages/Enrichment.jsx';
 import KanbanPage      from './pages/Kanban.jsx';
 import AssignmentDesk  from './pages/AssignmentDesk.jsx';
 import DedupeReview    from './pages/DedupeReview.jsx';
+import SettingsPage    from './pages/Settings.jsx';
 
-// Placeholder for pages not yet built
 function ComingSoon({ title }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 12, color: '#64748B' }}>
@@ -23,17 +22,18 @@ function ComingSoon({ title }) {
 }
 
 const PAGE_META = {
-  '/sales':              { title: 'Pipeline',       sub: 'Kanban · deal stages' },
-  '/sales/assign':       { title: 'Assign Leads',   sub: 'Select leads · push to pipeline' },
-  '/sales/tasks':        { title: 'My Tasks',       sub: 'Due today, tomorrow and upcoming' },
-  '/sales/activity':     { title: 'Activity Feed',  sub: 'All team actions this week' },
-  '/sales/dashboard':    { title: 'Team Dashboard', sub: 'KPIs, quota progress, rep breakdown' },
-  '/sales/contacts':     { title: 'Contacts',       sub: 'Full contact database · search, edit, manage' },
-  '/sales/import':       { title: 'Import',         sub: 'Upload Excel or CSV · bulk import contacts' },
-  '/sales/enrichment':   { title: 'Enrichment',     sub: 'Contacts with missing data · fill gaps' },
-  '/sales/conferences':  { title: 'Conference Library', sub: 'Tech conference attendees · review and promote' },
-  '/sales/analytics':    { title: 'Analytics',      sub: 'Country breakdown, source analysis, trends' },
-  '/sales/dedupe':       { title: 'Deduplicate',    sub: 'Review & remove duplicate contacts' },
+  '/sales':              { title: 'Pipeline',           sub: 'Kanban · deal stages' },
+  '/sales/assign':       { title: 'Assign Leads',       sub: 'Select leads · push to pipeline' },
+  '/sales/tasks':        { title: 'My Tasks',           sub: 'Due today, tomorrow and upcoming' },
+  '/sales/activity':     { title: 'Activity Feed',      sub: 'All team actions this week' },
+  '/sales/dashboard':    { title: 'Team Dashboard',     sub: 'KPIs, quota progress, rep breakdown' },
+  '/sales/contacts':     { title: 'Contacts',           sub: 'Full contact database · search, edit, manage' },
+  '/sales/import':       { title: 'Import',             sub: 'Upload Excel or CSV · bulk import contacts' },
+  '/sales/enrichment':   { title: 'Enrichment',         sub: 'Contacts with missing data · fill gaps' },
+  '/sales/conferences':  { title: 'Conference Library', sub: 'Conference & event attendees · review and promote' },
+  '/sales/analytics':    { title: 'Analytics',          sub: 'Country breakdown, source analysis, trends' },
+  '/sales/dedupe':       { title: 'Deduplicate',        sub: 'Review & remove duplicate contacts' },
+  '/sales/settings':     { title: 'Settings',           sub: 'Manage reps, quotas and CRM configuration' },
 };
 
 function Topbar() {
@@ -71,6 +71,7 @@ function Layout() {
           <Route path="/sales/conferences"   element={<ComingSoon title="Conference Library" />} />
           <Route path="/sales/analytics"     element={<ComingSoon title="Analytics" />} />
           <Route path="/sales/dedupe"        element={<DedupeReview />} />
+          <Route path="/sales/settings"      element={<SettingsPage />} />
           <Route path="*"                    element={<KanbanPage />} />
         </Routes>
       </main>
