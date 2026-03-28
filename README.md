@@ -1,16 +1,41 @@
-# React + Vite
+# Eminds.ai Sales CRM
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + Supabase CRM for Eminds.ai — IT/AI consulting firm.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### 1. Supabase
+1. Create a new Supabase project at supabase.com
+2. Go to SQL Editor → paste contents of `supabase-schema.sql` → Run
+3. Copy your Project URL and anon key
 
-## React Compiler
+### 2. Environment variables
+1. Rename `.env.example` to `.env`
+2. Fill in your Supabase credentials:
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 3. GitHub + Vercel
+1. Push all files to your GitHub repo `enterprise-minds-crm`
+2. In Vercel → Settings → Environment Variables → add the two vars above
+3. Redeploy
 
-## Expanding the ESLint configuration
+## Pages built
+- ✅ Contacts — with star quality rating + ContactDrawer
+- ✅ Import — Apollo CSV, Excel, conference lists
+- ✅ Enrichment — cards open ContactDrawer
+- ✅ Pipeline (Kanban) — drag & drop, 8 stages
+- ✅ Assign Leads — quota tracking per rep
+- ✅ Deduplicate — email + LinkedIn matching
+- 🚧 Conference Library — coming next
+- 🚧 Analytics — coming next
+- 🚧 Tasks, Activity Feed, Dashboard — coming next
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Tech stack
+- React 18 + Vite
+- Supabase (DB + Auth)
+- @hello-pangea/dnd (Kanban drag & drop)
+- react-router-dom v6
+- Plus Jakarta Sans + DM Mono fonts
