@@ -337,19 +337,67 @@ export default function ImportPage() {
         const email = get('email');
         const linkedin = get('linkedin');
         const role = get('role');
+        // Clean nan values
+        const clean = v => (!v || v.toLowerCase() === 'nan') ? null : v;
         return {
-          company, contact: contact||null, role: role||null,
-          country: normalizeCountry(get('country')), city: get('city')||null,
-          email: email||null, phone: phone||null,
-          linkedin: linkedin||null, website: get('website')||null,
-          industry: get('industry')||null, source: get('source')||null,
-          tier: calcTier({email, phone, contact, role, linkedin}),
+          company, contact: clean(contact)||null, role: clean(role)||null,
+          country: normalizeCountry(get('country')), city: clean(get('city'))||null,
+          email: clean(email)||null, phone: clean(phone)||null,
+          linkedin: clean(linkedin)||null, website: clean(get('website'))||null,
+          industry: clean(get('industry'))||null, source: clean(get('source'))||null,
+          tier: calcTier({email: clean(email), phone: clean(phone), contact: clean(contact), role: clean(role), linkedin: clean(linkedin)}),
           services: [], imported_at: new Date().toISOString(), last_synced: new Date().toISOString(),
         };
       }).filter(Boolean);
 
-      for (let i = 0; i < mapped.length; i += BATCH) {
-        const batch = mapped.slice(i, i + BATCH);
+      // ── Deduplication against existing leads ──────────────────────────────
+      // Pull existing emails and company+contact combos from Supabase
+      let skipped = 0;
+      const existingEmails   = new Set();
+      const existingNameKeys = new Set();
+
+      // Fetch existing in batches of 1000
+      let from = 0;
+      while (true) {
+        const { data: existing } = await supabase.from('leads')
+          .select('email, company, contact')
+          .range(from, from + 999);
+        if (!existing || existing.length === 0) break;
+        existing.forEach(r => {
+          if (r.email) existingEmails.add(r.email.toLowerCase().trim());
+          if (r.company && r.contact) {
+            existingNameKeys.add((r.company + '|||' + r.contact).toLowerCase().trim());
+          }
+        });
+        if (existing.length < 1000) break;
+        from += 1000;
+      }
+
+      // Also dedup within the file itself
+      const seenEmails   = new Set();
+      const seenNameKeys = new Set();
+
+      const deduped = mapped.filter(row => {
+        const emailKey = row.email ? row.email.toLowerCase().trim() : null;
+        const nameKey  = (row.company && row.contact)
+          ? (row.company + '|||' + row.contact).toLowerCase().trim()
+          : null;
+
+        // Check against existing DB
+        if (emailKey && existingEmails.has(emailKey))   { skipped++; return false; }
+        if (nameKey  && existingNameKeys.has(nameKey))  { skipped++; return false; }
+
+        // Check within file (dedup within the upload itself)
+        if (emailKey && seenEmails.has(emailKey))       { skipped++; return false; }
+        if (nameKey  && seenNameKeys.has(nameKey))      { skipped++; return false; }
+
+        if (emailKey) seenEmails.add(emailKey);
+        if (nameKey)  seenNameKeys.add(nameKey);
+        return true;
+      });
+
+      for (let i = 0; i < deduped.length; i += BATCH) {
+        const batch = deduped.slice(i, i + BATCH);
         try {
           const { error } = await supabase.from('leads').insert(batch);
           if (error) { errors += batch.length; }
@@ -359,7 +407,7 @@ export default function ImportPage() {
       }
     }
 
-    setResult({ imported, errors, mode, total: rawRows.length });
+    setResult({ imported, errors, skipped: skipped || 0, mode, total: rawRows.length });
     setImporting(false);
     setStep(4);
   }
@@ -391,7 +439,7 @@ export default function ImportPage() {
             <div onClick={()=>setMode('exhibitors')} style={{flex:1,padding:'16px',background:mode==='exhibitors'?'#EFF6FF':'#fff',border:'1px solid '+(mode==='exhibitors'?'#0D1F3C':'#E4E8F0'),borderRadius:9,cursor:'pointer',textAlign:'center'}}>
               <div style={{fontSize:24,marginBottom:6}}>🏢</div>
               <div style={{fontSize:13,fontWeight:700,color:'#0D1F3C'}}>Exhibitors</div>
-              <div style={{fontSize:11,color:'#64748B'}}>Any trade show exhibitor list</div>
+              <div style={{fontSize:11,color:'#64748B'}}>Any conference or event attendee list</div>
             </div>
           </div>
 
@@ -537,6 +585,12 @@ export default function ImportPage() {
               <div style={{fontSize:22,fontWeight:600,color:'#065F46'}}>{result.imported.toLocaleString()}</div>
               <div style={{fontSize:11,color:'#64748B'}}>{mode==='exhibitors'?'Exhibitors':'Contacts'} imported</div>
             </div>
+            {result.skipped > 0 && (
+              <div style={{background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:9,padding:'12px 20px',minWidth:120}}>
+                <div style={{fontSize:22,fontWeight:600,color:'#92600A'}}>{result.skipped}</div>
+                <div style={{fontSize:11,color:'#64748B'}}>Skipped (duplicates)</div>
+              </div>
+            )}
             {result.errors > 0 && (
               <div style={{background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:9,padding:'12px 20px',minWidth:120}}>
                 <div style={{fontSize:22,fontWeight:600,color:'#E24B4A'}}>{result.errors}</div>
