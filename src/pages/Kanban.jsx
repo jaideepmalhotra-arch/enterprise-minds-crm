@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useSales } from '../data/SalesContext.jsx';
 import { moveCard, selfAssign } from '../data/api.js';
-import { STAGES, STAGE_NEXT, REPS, SERVICES } from '../data/supabase.js';
+import { STAGES, STAGE_NEXT, SERVICES } from '../data/supabase.js';
 import { RepAvatar, TierBadge, TaskRow, KpiCard, QuotaBar, Toast } from '../components/UI.jsx';
 import { StarRating } from '../components/ContactDrawer.jsx';
 import ContactDrawer from '../components/ContactDrawer.jsx';
@@ -87,7 +87,7 @@ function KanbanColumn({ stage, cards, activeRep, onOpenDrawer }) {
 }
 
 export default function KanbanPage() {
-  const { cardsByStage, cards, quotas, assignedCounts, loading, activeRep, setActiveRep, toast, showToast, refresh } = useSales();
+  const { cardsByStage, cards, reps, quotas, assignedCounts, loading, activeRep, setActiveRep, toast, showToast, refresh } = useSales();
   const [repFilter, setRepFilter] = useState('all');
   const [drawerContact, setDrawerContact] = useState(null);
 
@@ -106,7 +106,7 @@ export default function KanbanPage() {
     refresh();
   }
 
-  const total = cards.length;
+  const total      = cards.length;
   const unassigned = (cardsByStage['unassigned'] || []).length;
   const closedWon  = (cardsByStage['closed_won'] || []).length;
 
@@ -120,7 +120,7 @@ export default function KanbanPage() {
         <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
           <select value={repFilter} onChange={e => { setRepFilter(e.target.value); setActiveRep(e.target.value); }} style={{ border: '1px solid #D0D7E5', borderRadius: 7, padding: '5px 9px', fontSize: 11, background: '#fff' }}>
             <option value="all">All reps</option>
-            {REPS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {reps.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
           <select style={{ border: '1px solid #D0D7E5', borderRadius: 7, padding: '5px 9px', fontSize: 11, background: '#fff' }}>
             <option>All services</option>
@@ -131,7 +131,7 @@ export default function KanbanPage() {
 
       <div style={{ background: '#fff', borderBottom: '1px solid #E4E8F0', padding: '10px 20px', display: 'flex', gap: 14, overflowX: 'auto', alignItems: 'center' }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#64748B', minWidth: 80, flexShrink: 0 }}>Weekly quota</div>
-        {REPS.map(r => <QuotaBar key={r.id} repId={r.id} assigned={assignedCounts[r.id] || 0} quota={quotas[r.id] || r.quota} />)}
+        {reps.map(r => <QuotaBar key={r.id} repId={r.id} repName={r.name} repInitials={r.initials} colorBg={r.color_bg} colorText={r.color_text} assigned={assignedCounts[r.id] || 0} quota={quotas[r.id] || 50} />)}
       </div>
 
       <div style={{ display: 'flex', gap: 8, padding: '12px 20px 0', flexWrap: 'wrap' }}>
