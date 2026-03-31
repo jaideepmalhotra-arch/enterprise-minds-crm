@@ -359,7 +359,6 @@ export default function ImportPage() {
           industry:     clean(get('industry')) || null,
           source:       clean(get('source')) || null,
           tier:         calcTier({ email, phone, contact, role, linkedin }),
-          services:     [],
           imported_at:  new Date().toISOString(),
           last_synced:  new Date().toISOString(),
         });
@@ -379,31 +378,31 @@ export default function ImportPage() {
         return true;
       });
 
-      // ── Split by email presence, insert in batches ──────────────────────────
-      const withEmail    = fileDeduped.filter(r => r.email);
-      const withoutEmail = fileDeduped.filter(r => !r.email);
-
-      // Rows with email: upsert (DB unique index handles duplicates)
-      for (let i = 0; i < withEmail.length; i += BATCH) {
-        const batch = withEmail.slice(i, i + BATCH);
-        try {
-          const { error } = await supabase.from('leads')
-            .upsert(batch, { onConflict: 'email', ignoreDuplicates: true });
-          if (error) { errors += batch.length; console.error('upsert err:', error.message); }
-          else imported += batch.length;
-        } catch(e) { errors += batch.length; }
-        await new Promise(r => setTimeout(r, 50));
-      }
-
-      // Rows without email: plain insert (no conflict possible on null)
-      for (let i = 0; i < withoutEmail.length; i += BATCH) {
-        const batch = withoutEmail.slice(i, i + BATCH);
+      // ── Insert in batches — plain insert, catch duplicates as skipped ─────────
+      for (let i = 0; i < fileDeduped.length; i += BATCH) {
+        const batch = fileDeduped.slice(i, i + BATCH);
         try {
           const { error } = await supabase.from('leads').insert(batch);
-          if (error) { errors += batch.length; console.error('insert err:', error.message); }
-          else imported += batch.length;
+          if (error) {
+            if (error.code === '23505') {
+              // Unique violation — insert row by row to save non-duplicates
+              for (const row of batch) {
+                try {
+                  const { error: e2 } = await supabase.from('leads').insert(row);
+                  if (e2 && e2.code === '23505') skipped++;
+                  else if (e2) errors++;
+                  else imported++;
+                } catch(ex) { errors++; }
+              }
+            } else {
+              errors += batch.length;
+              console.error('Insert error:', error.message, error.code);
+            }
+          } else {
+            imported += batch.length;
+          }
         } catch(e) { errors += batch.length; }
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 80));
       }
     }
 
