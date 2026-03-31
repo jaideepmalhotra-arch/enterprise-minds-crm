@@ -10,6 +10,7 @@ import KanbanPage      from './pages/Kanban.jsx';
 import AssignmentDesk  from './pages/AssignmentDesk.jsx';
 import DedupeReview    from './pages/DedupeReview.jsx';
 import SettingsPage    from './pages/Settings.jsx';
+import DashboardPage   from './pages/Dashboard.jsx';
 
 function ComingSoon({ title }) {
   return (
@@ -64,7 +65,7 @@ function Layout() {
           <Route path="/sales/assign"        element={<AssignmentDesk />} />
           <Route path="/sales/tasks"         element={<ComingSoon title="My Tasks" />} />
           <Route path="/sales/activity"      element={<ComingSoon title="Activity Feed" />} />
-          <Route path="/sales/dashboard"     element={<ComingSoon title="Team Dashboard" />} />
+          <Route path="/sales/dashboard"     element={<DashboardPage />} />
           <Route path="/sales/contacts"      element={<ContactsPage />} />
           <Route path="/sales/import"        element={<ImportPage />} />
           <Route path="/sales/enrichment"    element={<EnrichmentPage />} />
