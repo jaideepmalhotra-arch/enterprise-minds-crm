@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../data/supabase.js';
+import { supabase, COUNTRY_LANG, getEmailDraft } from '../data/supabase.js';
 
 export function calcScore(c) {
   let s = 0;
@@ -36,6 +36,43 @@ export function StarRating({ contact, size = 13, showScore = false }) {
     <div title={tooltip} style={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'default' }}>
       {[1,2,3,4,5].map(i => <span key={i} style={{ fontSize: size, color: i <= stars ? '#F59E0B' : '#E2E8F0', lineHeight: 1 }}>★</span>)}
       {showScore && <span style={{ fontSize: 10, color: '#94A3B8', fontFamily: "'DM Mono', monospace", marginLeft: 3 }}>{score}</span>}
+    </div>
+  );
+}
+
+const RELEVANCY_CONFIG = {
+  high:   { bg: '#ECFDF5', color: '#065F46', border: '#86EFAC', label: 'High fit' },
+  medium: { bg: '#FFFBEB', color: '#92600A', border: '#FCD34D', label: 'Medium fit' },
+  low:    { bg: '#FEF2F2', color: '#991B1B', border: '#FCA5A5', label: 'Low fit' },
+};
+
+export function RelevancyBadge({ relevancy }) {
+  if (!relevancy) return null;
+  const c = RELEVANCY_CONFIG[relevancy];
+  if (!c) return null;
+  return (
+    <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 700, background: c.bg, color: c.color, border: `1px solid ${c.border}` }}>
+      {c.label}
+    </span>
+  );
+}
+
+function RelevancySelector({ value, onChange }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>Relevancy</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {['high','medium','low'].map(r => {
+          const c = RELEVANCY_CONFIG[r];
+          const active = value === r;
+          return (
+            <button key={r} onClick={() => onChange(active ? null : r)}
+              style={{ flex: 1, padding: '5px 0', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1px solid ${active ? c.border : '#E4E8F0'}`, background: active ? c.bg : '#F8FAFC', color: active ? c.color : '#64748B', transition: 'all .15s' }}>
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -77,7 +114,7 @@ function ActivityLog({ leadId }) {
     supabase.from('activities').select('*').eq('lead_id', leadId).order('logged_at', { ascending: false }).limit(20)
       .then(({ data }) => { setActivities(data || []); setLoading(false); });
   }, [leadId]);
-  const typeColors = { email: '#3B82F6', call: '#10B981', li_conn: '#0A66C2', li_msg: '#0A66C2', whatsapp: '#25D366', meeting: '#8B5CF6', note: '#64748B', enriched: '#F59E0B' };
+  const typeColors = { email: '#3B82F6', call: '#10B981', li_conn: '#0A66C2', li_msg: '#0A66C2', whatsapp: '#25D366', meeting: '#8B5CF6', note: '#64748B', enriched: '#F59E0B', follow_up: '#EC4899' };
   if (loading) return <div style={{ fontSize: 11, color: '#94A3B8', padding: '8px 0' }}>Loading...</div>;
   if (!activities.length) return <div style={{ fontSize: 11, color: '#94A3B8', padding: '8px 0' }}>No activity yet</div>;
   return (
@@ -86,7 +123,7 @@ function ActivityLog({ leadId }) {
         <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColors[a.type] || '#94A3B8', marginTop: 4, flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#0F172A', textTransform: 'capitalize' }}>{a.type.replace('_', ' ')}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#0F172A', textTransform: 'capitalize' }}>{(a.type || '').replace('_', ' ')}</div>
             {a.note && <div style={{ fontSize: 10, color: '#64748B' }}>{a.note}</div>}
             {a.outcome && <div style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic' }}>{a.outcome}</div>}
           </div>
@@ -97,19 +134,74 @@ function ActivityLog({ leadId }) {
   );
 }
 
+// Follow-up suggestion config per activity type
+const FOLLOW_UP_SUGGESTIONS = {
+  email:    { days: 3, label: 'Follow up if no reply',  type: 'follow_up' },
+  call:     { days: 1, label: 'Follow up after call',   type: 'follow_up' },
+  li_conn:  { days: 5, label: 'Follow up on LI connect',type: 'follow_up' },
+  li_msg:   { days: 3, label: 'Follow up on LI message',type: 'follow_up' },
+  meeting:  { days: 2, label: 'Send proposal after meeting', type: 'follow_up' },
+  whatsapp: { days: 2, label: 'Follow up on WhatsApp',  type: 'follow_up' },
+};
+
 function LogActivity({ leadId, onLogged }) {
-  const [type, setType] = useState('email');
-  const [note, setNote] = useState('');
+  const [type, setType]       = useState('email');
+  const [note, setNote]       = useState('');
   const [outcome, setOutcome] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [showFollowUp, setShowFollowUp] = useState(null);
   const types = ['email','call','li_conn','li_msg','whatsapp','meeting','note'];
+
   async function log() {
     if (!leadId) return;
     setSaving(true);
-    await supabase.from('activities').insert({ lead_id: leadId, type, note: note || null, outcome: outcome || null, logged_at: new Date().toISOString() });
-    setNote(''); setOutcome(''); onLogged();
+    await supabase.from('activities').insert({
+      lead_id: leadId, type, note: note || null,
+      outcome: outcome || null, logged_at: new Date().toISOString()
+    });
+    setNote(''); setOutcome('');
     setSaving(false);
+    // Suggest follow-up if applicable
+    const suggestion = FOLLOW_UP_SUGGESTIONS[type];
+    if (suggestion) {
+      setShowFollowUp({ ...suggestion, actType: type });
+    } else {
+      onLogged();
+    }
   }
+
+  async function createFollowUp() {
+    if (!showFollowUp || !leadId) return;
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + showFollowUp.days);
+    await supabase.from('tasks').insert({
+      lead_id: leadId, title: showFollowUp.label,
+      type: 'follow_up', due_date: dueDate.toISOString().slice(0, 10),
+      priority: 'high', status: 'open',
+    });
+    setShowFollowUp(null);
+    onLogged();
+  }
+
+  if (showFollowUp) {
+    return (
+      <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 8, padding: '12px 14px' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#92600A', marginBottom: 6 }}>Activity logged ✓</div>
+        <div style={{ fontSize: 11, color: '#78350F', marginBottom: 10 }}>
+          Set a follow-up reminder? <strong>{showFollowUp.label}</strong> in {showFollowUp.days} day{showFollowUp.days > 1 ? 's' : ''}.
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={createFollowUp} style={{ flex: 1, padding: '6px 0', background: '#F59E0B', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+            ✓ Set reminder
+          </button>
+          <button onClick={() => { setShowFollowUp(null); onLogged(); }} style={{ flex: 1, padding: '6px 0', background: 'transparent', color: '#92600A', border: '1px solid #FCD34D', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ background: '#F8FAFC', border: '1px solid #E4E8F0', borderRadius: 8, padding: '10px 12px' }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Log Activity</div>
@@ -126,11 +218,11 @@ function LogActivity({ leadId, onLogged }) {
 export default function ContactDrawer({ leadId, onClose, onSaved }) {
   const [contact, setContact] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('details');
+  const [tab, setTab]         = useState('details');
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [actKey, setActKey] = useState(0);
+  const [form, setForm]       = useState({});
+  const [saving, setSaving]   = useState(false);
+  const [actKey, setActKey]   = useState(0);
 
   const load = useCallback(async () => {
     if (!leadId) return;
@@ -162,23 +254,38 @@ export default function ContactDrawer({ leadId, onClose, onSaved }) {
 
   function openEmail() {
     if (!contact?.email) return;
-    const subject = encodeURIComponent(`Eminds.ai — ${contact.company}`);
-    const body = encodeURIComponent(`Hi ${contact.contact || 'there'},\n\n`);
-    window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${contact.email}&su=${subject}&body=${body}`, '_blank');
+    const lang = COUNTRY_LANG[contact.country] || 'en';
+    const draft = getEmailDraft(contact, lang);
+    const mailto = `mailto:${contact.email}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
+    window.location.href = mailto;
   }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const fieldGroups = [
-    { label: 'Contact Info', fields: [{ key: 'contact', label: 'Contact Name', type: 'text' }, { key: 'role', label: 'Role / Title', type: 'text' }, { key: 'email', label: 'Email', type: 'email' }, { key: 'phone', label: 'Phone', type: 'text' }, { key: 'linkedin', label: 'LinkedIn URL', type: 'text' }] },
-    { label: 'Company Info', fields: [{ key: 'company', label: 'Company', type: 'text' }, { key: 'website', label: 'Website', type: 'text' }, { key: 'industry', label: 'Industry', type: 'text' }, { key: 'company_size', label: 'Company Size', type: 'text' }, { key: 'country', label: 'Country', type: 'text' }, { key: 'city', label: 'City', type: 'text' }, { key: 'source', label: 'Source', type: 'text' }] },
+    { label: 'Contact Info', fields: [
+      { key: 'contact', label: 'Contact Name', type: 'text' },
+      { key: 'role', label: 'Role / Title', type: 'text' },
+      { key: 'email', label: 'Email', type: 'email' },
+      { key: 'phone', label: 'Phone', type: 'text' },
+      { key: 'linkedin', label: 'LinkedIn URL', type: 'text' },
+    ]},
+    { label: 'Company Info', fields: [
+      { key: 'company', label: 'Company', type: 'text' },
+      { key: 'website', label: 'Website', type: 'text' },
+      { key: 'industry', label: 'Industry', type: 'text' },
+      { key: 'company_size', label: 'Company Size', type: 'text' },
+      { key: 'country', label: 'Country', type: 'text' },
+      { key: 'city', label: 'City', type: 'text' },
+      { key: 'source', label: 'Source', type: 'text' },
+    ]},
     { label: 'Notes', fields: [{ key: 'notes', label: 'Notes', type: 'textarea' }] },
   ];
 
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1100 }} />
-      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 420, background: '#fff', boxShadow: '-4px 0 32px rgba(0,0,0,0.15)', zIndex: 1101, display: 'flex', flexDirection: 'column', fontFamily: "'Plus Jakarta Sans', sans-serif", animation: 'slideIn 0.22s ease-out' }}>
+      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 440, background: '#fff', boxShadow: '-4px 0 32px rgba(0,0,0,0.15)', zIndex: 1101, display: 'flex', flexDirection: 'column', fontFamily: "'Plus Jakarta Sans', sans-serif", animation: 'slideIn 0.22s ease-out' }}>
         <style>{`@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
 
         {/* Header */}
@@ -189,19 +296,28 @@ export default function ContactDrawer({ leadId, onClose, onSaved }) {
                 <>
                   <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact?.company || '—'}</div>
                   <div style={{ fontSize: 11, color: '#64748B' }}>{contact?.contact || 'No contact'}{contact?.role ? ` · ${contact.role}` : ''}</div>
-                  {contact && <div style={{ marginTop: 6 }}><StarRating contact={contact} size={14} showScore={true} /></div>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    {contact && <StarRating contact={contact} size={14} showScore={true} />}
+                    {contact?.relevancy && <RelevancyBadge relevancy={contact.relevancy} />}
+                  </div>
                 </>
               )}
             </div>
             <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#64748B', lineHeight: 1, flexShrink: 0 }}>✕</button>
           </div>
+
           {!loading && contact && (
             <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-              <button onClick={openEmail} disabled={!contact.email} style={{ flex: 1, padding: '6px 0', background: contact.email ? '#1A56DB' : '#F1F5F9', color: contact.email ? '#fff' : '#94A3B8', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: contact.email ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                ✉ Email{!contact.email ? ' (no email)' : ''}
+              <button onClick={openEmail} disabled={!contact.email}
+                style={{ flex: 1, padding: '6px 0', background: contact.email ? '#1A56DB' : '#F1F5F9', color: contact.email ? '#fff' : '#94A3B8', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: contact.email ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                ✉ {contact.email ? 'Draft in Outlook' : 'No email'}
               </button>
-              {contact.linkedin && <button onClick={() => window.open(contact.linkedin, '_blank')} style={{ padding: '6px 12px', background: '#EFF6FF', color: '#0A66C2', border: '1px solid #BFDBFE', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>in</button>}
-              {contact.phone && <button onClick={() => window.open(`tel:${contact.phone}`)} style={{ padding: '6px 12px', background: '#F0FDF4', color: '#065F46', border: '1px solid #86EFAC', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>📞</button>}
+              {contact.linkedin && (
+                <button onClick={() => window.open(contact.linkedin, '_blank')} style={{ padding: '6px 12px', background: '#EFF6FF', color: '#0A66C2', border: '1px solid #BFDBFE', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>in</button>
+              )}
+              {contact.phone && (
+                <button onClick={() => window.open(`tel:${contact.phone}`)} style={{ padding: '6px 12px', background: '#F0FDF4', color: '#065F46', border: '1px solid #86EFAC', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>📞</button>
+              )}
             </div>
           )}
         </div>
@@ -220,6 +336,23 @@ export default function ContactDrawer({ leadId, onClose, onSaved }) {
           : tab === 'details' ? (
             <div>
               <ScoreBreakdown form={editing ? form : contact} />
+
+              {/* Relevancy selector — always visible */}
+              <div style={{ background: '#F8FAFC', border: '1px solid #E4E8F0', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+                <RelevancySelector
+                  value={editing ? form.relevancy : contact.relevancy}
+                  onChange={v => {
+                    if (editing) {
+                      set('relevancy', v);
+                    } else {
+                      // Save relevancy directly without entering full edit mode
+                      supabase.from('leads').update({ relevancy: v }).eq('id', contact.id)
+                        .then(() => load());
+                    }
+                  }}
+                />
+              </div>
+
               {editing ? (
                 <div>
                   {fieldGroups.map(group => (
