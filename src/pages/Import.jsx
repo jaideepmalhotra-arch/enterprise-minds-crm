@@ -228,13 +228,15 @@ export default function ImportPage() {
   const [preview,   setPreview]   = useState([]);
   const [rawRows,   setRawRows]   = useState([]);
   const [mapping,   setMapping]   = useState({});
-  const [importing, setImporting] = useState(false);
-  const [result,    setResult]    = useState(null);
-  const [toast,     setToast]     = useState(null);
+  const [importing,   setImporting]   = useState(false);
+  const [result,      setResult]      = useState(null);
+  const [toast,       setToast]       = useState(null);
+  const [dedupResult, setDedupResult] = useState(null); // { newRows, dupeRows, dupeEmails }
+  const [checking,    setChecking]    = useState(false);
   const fileRef = useRef();
 
   const showToast = (msg, type='success') => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
-  function reset() { setStep(1); setMode(null); setFile(null); setHeaders([]); setPreview([]); setRawRows([]); setMapping({}); setResult(null); }
+  function reset() { setStep(1); setMode(null); setFile(null); setHeaders([]); setPreview([]); setRawRows([]); setMapping({}); setResult(null); setDedupResult(null); setChecking(false); }
 
   async function handleFile(f) {
     if (!f) return;
@@ -285,10 +287,67 @@ export default function ImportPage() {
     } catch(e) { showToast('Error reading file: ' + e.message, 'error'); }
   }
 
-  async function doImport() {
-    setImporting(true);
+  async function checkDuplicates() {
+    if (mode === 'exhibitors') { doImport(); return; }
+    setChecking(true);
     setStep(3);
-    let imported = 0, errors = 0;
+
+    const isApollo = headers.some(h => h.toLowerCase().includes('apollo contact id') || h.toLowerCase().includes('company name for emails'));
+    const clean = v => { if (!v) return null; const s = String(v).trim(); if (!s || s.toLowerCase() === 'nan' || s === 'undefined' || s === 'null') return null; return s; };
+
+    const mapped = [];
+    for (const row of rawRows) {
+      const get = k => mapping[k] !== undefined ? String(row[mapping[k]]||'').trim() : '';
+      const company = clean(get('company'));
+      if (!company) continue;
+      let contact = clean(get('contact'));
+      if (isApollo && mapping['_firstname'] !== undefined) {
+        const fn = clean(String(row[mapping['_firstname']]||''));
+        const ln = clean(String(row[mapping['_lastname']]||''));
+        if (fn || ln) contact = [fn,ln].filter(Boolean).join(' ');
+      }
+      const email = clean(get('email'));
+      const phone = clean(get('phone'))?.replace(/^'+/, '').trim() || null;
+      const linkedin = clean(get('linkedin'));
+      const role = clean(get('role'));
+      mapped.push({ company, contact: contact||null, role: role||null, country: normalizeCountry(get('country')), city: clean(get('city'))||null, email: email||null, phone: phone||null, linkedin: linkedin||null, website: clean(get('website'))||null, industry: clean(get('industry'))||null, source: clean(get('source'))||null, tier: calcTier({ email, phone, contact, role, linkedin }), imported_at: new Date().toISOString(), last_synced: new Date().toISOString() });
+    }
+
+    // Dedup within file
+    const seenE = new Set(), seenN = new Set();
+    const fileDeduped = mapped.filter(r => {
+      const ek = r.email ? r.email.toLowerCase() : null;
+      const nk = (r.company && r.contact) ? (r.company+'|||'+r.contact).toLowerCase() : null;
+      if (ek && seenE.has(ek)) return false;
+      if (nk && seenN.has(nk)) return false;
+      if (ek) seenE.add(ek);
+      if (nk) seenN.add(nk);
+      return true;
+    });
+
+    // Check emails against DB in chunks of 100
+    const emailsToCheck = fileDeduped.map(r => r.email).filter(Boolean);
+    const existingEmails = new Set();
+    for (let i = 0; i < emailsToCheck.length; i += 100) {
+      try {
+        const chunk = emailsToCheck.slice(i, i + 100);
+        const { data } = await supabase.from('leads').select('email, company, contact').in('email', chunk);
+        (data || []).forEach(r => { if (r.email) existingEmails.add(r.email.toLowerCase()); });
+      } catch(e) {}
+      await new Promise(r => setTimeout(r, 30));
+    }
+
+    const dupeRows = fileDeduped.filter(r => r.email && existingEmails.has(r.email.toLowerCase()));
+    const newRows  = fileDeduped.filter(r => !r.email || !existingEmails.has(r.email.toLowerCase()));
+
+    setDedupResult({ newRows, dupeRows, mappedRows: fileDeduped });
+    setChecking(false);
+  }
+
+  async function doImport(rowsToImport) {
+    setImporting(true);
+    setStep(4);
+    let imported = 0, errors = 0, skipped = 0;
     const BATCH = 30;
     const isApollo = headers.some(h => h.toLowerCase().includes('apollo contact id') || h.toLowerCase().includes('company name for emails'));
     const expoName = expo.trim() || 'Unknown Exhibition';
@@ -322,78 +381,20 @@ export default function ImportPage() {
         } catch(e) { errors += batch.length; }
         await new Promise(r => setTimeout(r, 60));
       }
-    } else {
-      // ── Clean + map rows ─────────────────────────────────────────────────
-      const clean = v => {
-        if (!v) return null;
-        const s = String(v).trim();
-        if (!s || s.toLowerCase() === 'nan' || s === 'undefined' || s === 'null') return null;
-        return s;
-      };
-
-      const mapped = [];
-      for (const row of rawRows) {
-        const get = k => mapping[k] !== undefined ? String(row[mapping[k]]||'').trim() : '';
-        const company = clean(get('company'));
-        if (!company) continue;
-        let contact = clean(get('contact'));
-        if (isApollo && mapping['_firstname'] !== undefined) {
-          const fn = clean(String(row[mapping['_firstname']]||''));
-          const ln = clean(String(row[mapping['_lastname']]||''));
-          if (fn || ln) contact = [fn,ln].filter(Boolean).join(' ');
-        }
-        const email   = clean(get('email'));
-        const phone   = clean(get('phone'))?.replace(/^'+/, '').trim() || null;
-        const linkedin = clean(get('linkedin'));
-        const role    = clean(get('role'));
-        mapped.push({
-          company,
-          contact:      contact || null,
-          role:         role || null,
-          country:      normalizeCountry(get('country')),
-          city:         clean(get('city')) || null,
-          email:        email || null,
-          phone:        phone || null,
-          linkedin:     linkedin || null,
-          website:      clean(get('website')) || null,
-          industry:     clean(get('industry')) || null,
-          source:       clean(get('source')) || null,
-          tier:         calcTier({ email, phone, contact, role, linkedin }),
-          imported_at:  new Date().toISOString(),
-          last_synced:  new Date().toISOString(),
-        });
-      }
-
-      // ── Dedup within file ────────────────────────────────────────────────
+    } else if (rowsToImport) {
+      // ── Use pre-checked rows passed from dedup review ─────────────────────
+      const fileDeduped = rowsToImport;
       let skipped = 0;
-      const seenEmails   = new Set();
-      const seenNameKeys = new Set();
-      const fileDeduped  = mapped.filter(row => {
-        const ek = row.email ? row.email.toLowerCase() : null;
-        const nk = (row.company && row.contact) ? (row.company + '|||' + row.contact).toLowerCase() : null;
-        if (ek && seenEmails.has(ek))   { skipped++; return false; }
-        if (nk && seenNameKeys.has(nk)) { skipped++; return false; }
-        if (ek) seenEmails.add(ek);
-        if (nk) seenNameKeys.add(nk);
-        return true;
-      });
 
-      // ── Insert in batches — plain insert, catch duplicates as skipped ─────────
+      // ── Insert in batches — skip entire batch if conflict ───────────────────
       for (let i = 0; i < fileDeduped.length; i += BATCH) {
         const batch = fileDeduped.slice(i, i + BATCH);
         try {
           const { error } = await supabase.from('leads').insert(batch);
           if (error) {
-            if (error.code === '23505') {
-              // Unique violation — insert row by row to save non-duplicates
-              for (const row of batch) {
-                try {
-                  const { error: e2 } = await supabase.from('leads').insert(row);
-                  if (e2 && e2.code === '23505') skipped++;
-                  else if (e2) errors++;
-                  else imported++;
-                } catch(ex) { errors++; }
-              }
+            if (error.code === '23505' || error.message?.includes('conflict') || error.message?.includes('duplicate')) {
+              // Batch has duplicates — skip whole batch, count as skipped
+              skipped += batch.length;
             } else {
               errors += batch.length;
               console.error('Insert error:', error.message, error.code);
@@ -402,13 +403,13 @@ export default function ImportPage() {
             imported += batch.length;
           }
         } catch(e) { errors += batch.length; }
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise(r => setTimeout(r, 30));
       }
     }
 
     setResult({ imported, errors, skipped: skipped || 0, mode, total: rawRows.length });
     setImporting(false);
-    setStep(4);
+    setStep(5);
   }
 
   const fields = mode === 'exhibitors' ? EXHIBITOR_FIELDS : CONTACT_FIELDS;
@@ -418,8 +419,8 @@ export default function ImportPage() {
 
       {/* Step indicator */}
       <div style={{display:'flex',gap:0,marginBottom:24,background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,overflow:'hidden'}}>
-        {['Upload file','Map columns','Importing','Done'].map((label,i) => (
-          <div key={i} style={{flex:1,padding:'10px 16px',background:step===i+1?'#0D1F3C':step>i+1?'#ECFDF5':'#F8FAFC',color:step===i+1?'#fff':step>i+1?'#065F46':'#94A3B8',fontSize:12,fontWeight:step===i+1?700:500,textAlign:'center',borderRight:i<3?'1px solid #E4E8F0':'none'}}>
+        {['Upload file','Map columns','Review','Importing','Done'].map((label,i) => (
+          <div key={i} style={{flex:1,padding:'10px 16px',background:step===i+1?'#0D1F3C':step>i+1?'#ECFDF5':'#F8FAFC',color:step===i+1?'#fff':step>i+1?'#065F46':'#94A3B8',fontSize:12,fontWeight:step===i+1?700:500,textAlign:'center',borderRight:i<4?'1px solid #E4E8F0':'none'}}>
             {step>i+1?'✓ ':''}{label}
           </div>
         ))}
@@ -551,7 +552,7 @@ export default function ImportPage() {
           <div style={{display:'flex',gap:8}}>
             <Btn variant="outline" onClick={reset}>Back</Btn>
             <Btn
-              onClick={doImport}
+              onClick={checkDuplicates}
               disabled={mapping.company===undefined && mapping['_firstname']===undefined || (mode==='exhibitors' && !expo.trim())}>
               Import {rawRows.length} {mode==='exhibitors'?'exhibitors':'contacts'}{mode==='exhibitors' && expo.trim() ? ` → ${expo.trim()}` : ' → Contacts DB'}
             </Btn>
@@ -562,22 +563,92 @@ export default function ImportPage() {
         </div>
       )}
 
-      {/* ── Step 3: Importing ── */}
-      {step===3 && (
+      {/* ── Step 3: Dedup Review ── */}
+      {step===3 && dedupResult && (
+        <div>
+          {/* Summary */}
+          <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
+            <div style={{flex:1,background:'#ECFDF5',border:'1px solid #86EFAC',borderRadius:10,padding:'14px 18px',textAlign:'center'}}>
+              <div style={{fontSize:28,fontWeight:700,color:'#065F46'}}>{dedupResult.newRows.length}</div>
+              <div style={{fontSize:12,color:'#065F46',fontWeight:600}}>New contacts</div>
+              <div style={{fontSize:11,color:'#94A3B8',marginTop:2}}>Will be imported</div>
+            </div>
+            <div style={{flex:1,background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:10,padding:'14px 18px',textAlign:'center'}}>
+              <div style={{fontSize:28,fontWeight:700,color:'#92600A'}}>{dedupResult.dupeRows.length}</div>
+              <div style={{fontSize:12,color:'#92600A',fontWeight:600}}>Duplicates found</div>
+              <div style={{fontSize:11,color:'#94A3B8',marginTop:2}}>Already in database</div>
+            </div>
+            <div style={{flex:1,background:'#F8FAFC',border:'1px solid #E4E8F0',borderRadius:10,padding:'14px 18px',textAlign:'center'}}>
+              <div style={{fontSize:28,fontWeight:700,color:'#0D1F3C'}}>{dedupResult.mappedRows.length}</div>
+              <div style={{fontSize:12,color:'#64748B',fontWeight:600}}>Total in file</div>
+              <div style={{fontSize:11,color:'#94A3B8',marginTop:2}}>After file-level dedup</div>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{display:'flex',gap:8,marginBottom:16}}>
+            {dedupResult.newRows.length > 0 ? (
+              <button onClick={()=>doImport(dedupResult.newRows)} style={{flex:1,padding:'10px 0',background:'#1A56DB',color:'#fff',border:'none',borderRadius:8,fontSize:13,fontWeight:700,cursor:'pointer'}}>
+                ✓ Import {dedupResult.newRows.length} new contacts (skip {dedupResult.dupeRows.length} duplicates)
+              </button>
+            ) : (
+              <div style={{flex:1,padding:'10px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,fontWeight:600,color:'#991B1B',textAlign:'center'}}>
+                All {dedupResult.dupeRows.length} contacts already exist in database
+              </div>
+            )}
+            <button onClick={reset} style={{padding:'10px 16px',background:'transparent',color:'#64748B',border:'1px solid #D0D7E5',borderRadius:8,fontSize:12,cursor:'pointer'}}>Cancel</button>
+          </div>
+
+          {/* Duplicate list */}
+          {dedupResult.dupeRows.length > 0 && (
+            <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,overflow:'hidden'}}>
+              <div style={{padding:'10px 16px',borderBottom:'1px solid #E4E8F0',fontSize:12,fontWeight:700,color:'#0D1F3C',display:'flex',justifyContent:'space-between'}}>
+                <span>Duplicate contacts (already in DB)</span>
+                <span style={{fontSize:11,color:'#94A3B8'}}>{dedupResult.dupeRows.length} records</span>
+              </div>
+              <div style={{maxHeight:280,overflowY:'auto'}}>
+                {dedupResult.dupeRows.map((r,i) => (
+                  <div key={i} style={{display:'flex',gap:12,padding:'8px 16px',borderBottom:'1px solid #F1F5F9',fontSize:12,alignItems:'center'}}>
+                    <div style={{width:7,height:7,borderRadius:'50%',background:'#FCD34D',flexShrink:0}}/>
+                    <span style={{fontWeight:600,flex:'0 0 180px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company}</span>
+                    <span style={{color:'#64748B',flex:'0 0 140px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.contact||'—'}</span>
+                    <span style={{color:'#94A3B8',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.email}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 3: Checking (shown while checking) ── */}
+      {step===3 && !dedupResult && (
         <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:12,padding:48,textAlign:'center'}}>
           <div style={{fontSize:32,marginBottom:14}}>⋯</div>
-          <div style={{fontSize:15,fontWeight:700,color:'#0D1F3C',marginBottom:6}}>Importing {mode==='exhibitors'?'exhibitors':'contacts'}…</div>
-          <div style={{fontSize:13,color:'#64748B',marginBottom:4}}>Processing rows — please wait, do not close this tab</div>
-          <div style={{fontSize:12,color:'#94A3B8'}}>Large files may take up to 60 seconds</div>
+          <div style={{fontSize:15,fontWeight:700,color:'#0D1F3C',marginBottom:6}}>Checking for duplicates…</div>
+          <div style={{fontSize:13,color:'#64748B'}}>Comparing {rawRows.length} rows against your database</div>
           <div style={{height:6,background:'#F1F5F9',borderRadius:3,marginTop:20,overflow:'hidden'}}>
-            <div style={{height:'100%',background:'#0D1F3C',borderRadius:3,width:'100%',animation:'progress 2s ease-in-out infinite'}}/>
+            <div style={{height:'100%',background:'#1A56DB',borderRadius:3,width:'100%',animation:'progress 2s ease-in-out infinite'}}/>
           </div>
           <style>{`@keyframes progress { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }`}</style>
         </div>
       )}
 
-      {/* ── Step 4: Done ── */}
-      {step===4 && result && (
+      {/* ── Step 4: Importing ── */}
+      {step===4 && (
+        <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:12,padding:48,textAlign:'center'}}>
+          <div style={{fontSize:32,marginBottom:14}}>⋯</div>
+          <div style={{fontSize:15,fontWeight:700,color:'#0D1F3C',marginBottom:6}}>Importing {mode==='exhibitors'?'exhibitors':'contacts'}…</div>
+          <div style={{fontSize:13,color:'#64748B',marginBottom:4}}>Please wait, do not close this tab</div>
+          <div style={{height:6,background:'#F1F5F9',borderRadius:3,marginTop:20,overflow:'hidden'}}>
+            <div style={{height:'100%',background:'#1A56DB',borderRadius:3,width:'100%',animation:'progress 2s ease-in-out infinite'}}/>
+          </div>
+          <style>{`@keyframes progress { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }`}</style>
+        </div>
+      )}
+
+      {/* ── Step 5: Done ── */}
+      {step===5 && result && (
         <div style={{background:'#ECFDF5',border:'1px solid #86EFAC',borderRadius:12,padding:32,textAlign:'center'}}>
           <div style={{fontSize:40,marginBottom:12}}>✓</div>
           <div style={{fontSize:18,fontWeight:700,color:'#065F46',marginBottom:16}}>Import complete</div>
