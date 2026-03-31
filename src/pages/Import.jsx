@@ -379,24 +379,30 @@ export default function ImportPage() {
         return true;
       });
 
-      // ── Insert with upsert ignoreDuplicates (DB handles dedup via unique index) ──
-      const deduped = fileDeduped; // file-level dedup already done above
+      // ── Split by email presence, insert in batches ──────────────────────────
+      const withEmail    = fileDeduped.filter(r => r.email);
+      const withoutEmail = fileDeduped.filter(r => !r.email);
 
-      for (let i = 0; i < deduped.length; i += BATCH) {
-        const batch = deduped.slice(i, i + BATCH);
+      // Rows with email: upsert (DB unique index handles duplicates)
+      for (let i = 0; i < withEmail.length; i += BATCH) {
+        const batch = withEmail.slice(i, i + BATCH);
         try {
-          const { error, data } = await supabase.from('leads')
+          const { error } = await supabase.from('leads')
             .upsert(batch, { onConflict: 'email', ignoreDuplicates: true });
-          if (error) {
-            console.error('Insert error:', error.message);
-            errors += batch.length;
-          } else {
-            imported += batch.length;
-          }
-        } catch(e) {
-          console.error('Insert exception:', e.message);
-          errors += batch.length;
-        }
+          if (error) { errors += batch.length; console.error('upsert err:', error.message); }
+          else imported += batch.length;
+        } catch(e) { errors += batch.length; }
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      // Rows without email: plain insert (no conflict possible on null)
+      for (let i = 0; i < withoutEmail.length; i += BATCH) {
+        const batch = withoutEmail.slice(i, i + BATCH);
+        try {
+          const { error } = await supabase.from('leads').insert(batch);
+          if (error) { errors += batch.length; console.error('insert err:', error.message); }
+          else imported += batch.length;
+        } catch(e) { errors += batch.length; }
         await new Promise(r => setTimeout(r, 50));
       }
     }
