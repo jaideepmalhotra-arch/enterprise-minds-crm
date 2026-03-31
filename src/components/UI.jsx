@@ -1,14 +1,17 @@
 import React from 'react';
-import { REPS, STAGES, ACTIVITY_TYPES } from '../data/supabase.js';
+import { STAGES, ACTIVITY_TYPES } from '../data/supabase.js';
 import { taskUrgency, fmtDate } from '../utils/dates.js';
 export { calcScore, scoreToStars, StarRating } from './ContactDrawer.jsx';
 
-export function RepAvatar({ repId, size = 24 }) {
-  const rep = REPS.find(r => r.id === repId);
-  if (!rep) return null;
+// RepAvatar now accepts rep data directly (no REPS lookup needed)
+export function RepAvatar({ repId, repInitials, colorBg, colorText, size = 24 }) {
+  if (!repId && !repInitials) return null;
+  const initials = repInitials || repId || '?';
+  const bg   = colorBg   || '#E6F1FB';
+  const text = colorText || '#0C447C';
   return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: rep.colorBg, color: rep.colorText, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 700, flexShrink: 0 }}>
-      {rep.initials}
+    <div style={{ width: size, height: size, borderRadius: '50%', background: bg, color: text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 700, flexShrink: 0 }}>
+      {initials}
     </div>
   );
 }
@@ -37,17 +40,16 @@ export function TaskRow({ task }) {
   return <div style={{ fontSize: 10, padding: '4px 7px', marginTop: 6, borderLeft: `2px solid ${c.border}`, background: c.bg, color: c.color }}>{task.title} · {fmtDate(task.due_date)}</div>;
 }
 
-export function QuotaBar({ repId, assigned, quota, showLabel = true }) {
-  const rep = REPS.find(r => r.id === repId);
-  if (!rep) return null;
-  const pct = Math.min(100, Math.round((assigned / quota) * 100));
+export function QuotaBar({ repId, repName, repInitials, colorBg, colorText, assigned, quota, showLabel = true }) {
+  if (!repId) return null;
+  const pct  = Math.min(100, Math.round((assigned / quota) * 100));
   const over = assigned > quota;
   return (
     <div style={{ flex: 1, minWidth: 120 }}>
       {showLabel && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-          <RepAvatar repId={repId} size={16} />
-          <span style={{ fontSize: 11, fontWeight: 600 }}>{rep.name}</span>
+          <RepAvatar repId={repId} repInitials={repInitials} colorBg={colorBg} colorText={colorText} size={16} />
+          <span style={{ fontSize: 11, fontWeight: 600 }}>{repName || repId}</span>
         </div>
       )}
       <div style={{ height: 5, background: '#F1F5F9', borderRadius: 3, marginBottom: 3 }}>
