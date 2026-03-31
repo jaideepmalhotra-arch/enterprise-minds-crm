@@ -27,17 +27,17 @@ export default function EnrichmentPage() {
 
   // Load accurate KPIs separately — always from full DB
   const loadKpis = useCallback(async () => {
-    const [totalRes, emailRes, phoneRes, contactRes] = await Promise.all([
-      supabase.from('leads').select('id', { count: 'exact', head: true }).in('tier', ['minimal','empty','partial']),
+    const [emailRes, phoneRes, linkedinRes, needRes] = await Promise.all([
       supabase.from('leads').select('id', { count: 'exact', head: true }).or('email.is.null,email.eq.'),
       supabase.from('leads').select('id', { count: 'exact', head: true }).or('phone.is.null,phone.eq.'),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).or('contact.is.null,contact.eq.'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).or('linkedin.is.null,linkedin.eq.'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).or('email.is.null,email.eq.,phone.is.null,phone.eq.,linkedin.is.null,linkedin.eq.'),
     ]);
     setKpis({
-      total:          totalRes.count   || 0,
-      missingEmail:   emailRes.count   || 0,
-      missingPhone:   phoneRes.count   || 0,
-      missingContact: contactRes.count || 0,
+      total:          needRes.count     || 0,
+      missingEmail:   emailRes.count    || 0,
+      missingPhone:   phoneRes.count    || 0,
+      missingContact: linkedinRes.count || 0,
     });
   }, []);
 
@@ -75,7 +75,7 @@ export default function EnrichmentPage() {
           ['Need enrichment', kpis.total,          '#F59E0B'],
           ['Missing email',   kpis.missingEmail,   '#E24B4A'],
           ['Missing phone',   kpis.missingPhone,   '#E24B4A'],
-          ['Missing contact', kpis.missingContact, '#E24B4A'],
+          ['Missing LinkedIn', kpis.missingContact, '#E24B4A'],
         ].map(([l, v, c]) => (
           <div key={l} style={{ background: '#fff', border: '1px solid #E4E8F0', borderRadius: 9, padding: '10px 14px', flex: 1, minWidth: 120 }}>
             <div style={{ fontSize: 10, color: '#64748B', marginBottom: 3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.04em' }}>{l}</div>

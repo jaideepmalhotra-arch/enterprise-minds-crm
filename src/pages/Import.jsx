@@ -379,31 +379,16 @@ export default function ImportPage() {
         return true;
       });
 
-      // ── Dedup against DB (emails only, in chunks) ────────────────────────
-      const emailsToCheck = fileDeduped.map(r => r.email).filter(Boolean);
-      const existingEmails = new Set();
-      for (let i = 0; i < emailsToCheck.length; i += 100) {
-        try {
-          const chunk = emailsToCheck.slice(i, i + 100);
-          const { data: found } = await supabase.from('leads').select('email').in('email', chunk);
-          (found || []).forEach(r => { if (r.email) existingEmails.add(r.email.toLowerCase()); });
-        } catch(e) { /* continue even if chunk fails */ }
-        await new Promise(r => setTimeout(r, 50));
-      }
+      // ── Insert with upsert ignoreDuplicates (DB handles dedup via unique index) ──
+      const deduped = fileDeduped; // file-level dedup already done above
 
-      const deduped = fileDeduped.filter(row => {
-        const ek = row.email ? row.email.toLowerCase() : null;
-        if (ek && existingEmails.has(ek)) { skipped++; return false; }
-        return true;
-      });
-
-      // ── Insert in small batches ───────────────────────────────────────────
       for (let i = 0; i < deduped.length; i += BATCH) {
         const batch = deduped.slice(i, i + BATCH);
         try {
-          const { error } = await supabase.from('leads').insert(batch);
+          const { error, data } = await supabase.from('leads')
+            .upsert(batch, { onConflict: 'email', ignoreDuplicates: true });
           if (error) {
-            console.error('Insert error:', error.message, error.details);
+            console.error('Insert error:', error.message);
             errors += batch.length;
           } else {
             imported += batch.length;
@@ -412,7 +397,7 @@ export default function ImportPage() {
           console.error('Insert exception:', e.message);
           errors += batch.length;
         }
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise(r => setTimeout(r, 50));
       }
     }
 
