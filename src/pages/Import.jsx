@@ -350,49 +350,41 @@ export default function ImportPage() {
         };
       }).filter(Boolean);
 
-      // ── Deduplication against existing leads ──────────────────────────────
-      // Pull existing emails and company+contact combos from Supabase
+      // ── Deduplication ────────────────────────────────────────────────────
       let skipped = 0;
-      const existingEmails   = new Set();
-      const existingNameKeys = new Set();
 
-      // Fetch existing in batches of 1000
-      let from = 0;
-      while (true) {
-        const { data: existing } = await supabase.from('leads')
-          .select('email, company, contact')
-          .range(from, from + 999);
-        if (!existing || existing.length === 0) break;
-        existing.forEach(r => {
-          if (r.email) existingEmails.add(r.email.toLowerCase().trim());
-          if (r.company && r.contact) {
-            existingNameKeys.add((r.company + '|||' + r.contact).toLowerCase().trim());
-          }
-        });
-        if (existing.length < 1000) break;
-        from += 1000;
-      }
-
-      // Also dedup within the file itself
+      // Step 1: dedup within the file itself first
       const seenEmails   = new Set();
       const seenNameKeys = new Set();
-
-      const deduped = mapped.filter(row => {
+      const fileDeduped = mapped.filter(row => {
         const emailKey = row.email ? row.email.toLowerCase().trim() : null;
         const nameKey  = (row.company && row.contact)
-          ? (row.company + '|||' + row.contact).toLowerCase().trim()
-          : null;
-
-        // Check against existing DB
-        if (emailKey && existingEmails.has(emailKey))   { skipped++; return false; }
-        if (nameKey  && existingNameKeys.has(nameKey))  { skipped++; return false; }
-
-        // Check within file (dedup within the upload itself)
-        if (emailKey && seenEmails.has(emailKey))       { skipped++; return false; }
-        if (nameKey  && seenNameKeys.has(nameKey))      { skipped++; return false; }
-
+          ? (row.company + '|||' + row.contact).toLowerCase().trim() : null;
+        if (emailKey && seenEmails.has(emailKey))   { skipped++; return false; }
+        if (nameKey  && seenNameKeys.has(nameKey))  { skipped++; return false; }
         if (emailKey) seenEmails.add(emailKey);
         if (nameKey)  seenNameKeys.add(nameKey);
+        return true;
+      });
+
+      // Step 2: check emails against DB in one query using 'in' filter
+      const emailsToCheck = fileDeduped.map(r => r.email).filter(Boolean);
+      const existingEmails = new Set();
+      if (emailsToCheck.length > 0) {
+        // Check in chunks of 200 to avoid URL length limits
+        for (let i = 0; i < emailsToCheck.length; i += 200) {
+          const chunk = emailsToCheck.slice(i, i + 200);
+          const { data: found } = await supabase
+            .from('leads')
+            .select('email')
+            .in('email', chunk);
+          (found || []).forEach(r => { if (r.email) existingEmails.add(r.email.toLowerCase().trim()); });
+        }
+      }
+
+      const deduped = fileDeduped.filter(row => {
+        const emailKey = row.email ? row.email.toLowerCase().trim() : null;
+        if (emailKey && existingEmails.has(emailKey)) { skipped++; return false; }
         return true;
       });
 
