@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { supabase } from '../data/supabase.js';
+import { supabase } from '../../data/supabase.js';
 
 export default function SalesSidebar() {
   const [overdueCount, setOverdueCount] = useState(0);
