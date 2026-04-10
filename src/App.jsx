@@ -11,6 +11,9 @@ import AssignmentDesk  from './pages/AssignmentDesk.jsx';
 import DedupeReview    from './pages/DedupeReview.jsx';
 import SettingsPage    from './pages/Settings.jsx';
 import DashboardPage   from './pages/Dashboard.jsx';
+import MyTasksPage     from './pages/MyTasks.jsx';
+import ActivityFeedPage from './pages/ActivityFeed.jsx';
+import ConferencesPage  from './pages/Conferences.jsx';
 
 function ComingSoon({ title }) {
   return (
@@ -25,14 +28,14 @@ function ComingSoon({ title }) {
 const PAGE_META = {
   '/sales':              { title: 'Pipeline',           sub: 'Kanban · deal stages' },
   '/sales/assign':       { title: 'Assign Leads',       sub: 'Select leads · push to pipeline' },
-  '/sales/tasks':        { title: 'My Tasks',           sub: 'Due today, tomorrow and upcoming' },
-  '/sales/activity':     { title: 'Activity Feed',      sub: 'All team actions this week' },
-  '/sales/dashboard':    { title: 'Team Dashboard',     sub: 'KPIs, quota progress, rep breakdown' },
+  '/sales/tasks':        { title: 'My Tasks',           sub: 'Open · overdue · snoozed · done' },
+  '/sales/activity':     { title: 'Activity Feed',      sub: 'All team actions · chronological' },
+  '/sales/dashboard':    { title: 'Team Dashboard',     sub: 'KPIs · quota progress · rep breakdown' },
   '/sales/contacts':     { title: 'Contacts',           sub: 'Full contact database · search, edit, manage' },
   '/sales/import':       { title: 'Import',             sub: 'Upload Excel or CSV · bulk import contacts' },
   '/sales/enrichment':   { title: 'Enrichment',         sub: 'Contacts with missing data · fill gaps' },
-  '/sales/conferences':  { title: 'Conference Library', sub: 'Conference & event attendees · review and promote' },
-  '/sales/analytics':    { title: 'Analytics',          sub: 'Country breakdown, source analysis, trends' },
+  '/sales/conferences':  { title: 'Conference Library', sub: 'Event attendees · review and promote to leads' },
+  '/sales/analytics':    { title: 'Analytics',          sub: 'Country breakdown · source analysis · trends' },
   '/sales/dedupe':       { title: 'Deduplicate',        sub: 'Review & remove duplicate contacts' },
   '/sales/settings':     { title: 'Settings',           sub: 'Manage reps, quotas and CRM configuration' },
 };
@@ -63,13 +66,13 @@ function Layout() {
         <Routes>
           <Route path="/sales"               element={<KanbanPage />} />
           <Route path="/sales/assign"        element={<AssignmentDesk />} />
-          <Route path="/sales/tasks"         element={<ComingSoon title="My Tasks" />} />
-          <Route path="/sales/activity"      element={<ComingSoon title="Activity Feed" />} />
+          <Route path="/sales/tasks"         element={<MyTasksPage />} />
+          <Route path="/sales/activity"      element={<ActivityFeedPage />} />
           <Route path="/sales/dashboard"     element={<DashboardPage />} />
           <Route path="/sales/contacts"      element={<ContactsPage />} />
           <Route path="/sales/import"        element={<ImportPage />} />
           <Route path="/sales/enrichment"    element={<EnrichmentPage />} />
-          <Route path="/sales/conferences"   element={<ComingSoon title="Conference Library" />} />
+          <Route path="/sales/conferences"   element={<ConferencesPage />} />
           <Route path="/sales/analytics"     element={<ComingSoon title="Analytics" />} />
           <Route path="/sales/dedupe"        element={<DedupeReview />} />
           <Route path="/sales/settings"      element={<SettingsPage />} />
