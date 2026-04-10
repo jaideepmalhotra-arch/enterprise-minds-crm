@@ -3,17 +3,18 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import SalesProvider from './data/SalesContext.jsx';
 import SalesSidebar from './components/layout/SalesSidebar.jsx';
 
-import ContactsPage    from './pages/Contacts.jsx';
-import ImportPage      from './pages/Import.jsx';
-import EnrichmentPage  from './pages/Enrichment.jsx';
-import KanbanPage      from './pages/Kanban.jsx';
-import AssignmentDesk  from './pages/AssignmentDesk.jsx';
-import DedupeReview    from './pages/DedupeReview.jsx';
-import SettingsPage    from './pages/Settings.jsx';
-import DashboardPage   from './pages/Dashboard.jsx';
-import MyTasksPage     from './pages/MyTasks.jsx';
+import ContactsPage     from './pages/Contacts.jsx';
+import ImportPage       from './pages/Import.jsx';
+import EnrichmentPage   from './pages/Enrichment.jsx';
+import KanbanPage       from './pages/Kanban.jsx';
+import AssignmentDesk   from './pages/AssignmentDesk.jsx';
+import DedupeReview     from './pages/DedupeReview.jsx';
+import SettingsPage     from './pages/Settings.jsx';
+import DashboardPage    from './pages/Dashboard.jsx';
+import MyTasksPage      from './pages/MyTasks.jsx';
 import ActivityFeedPage from './pages/ActivityFeed.jsx';
 import ConferencesPage  from './pages/Conferences.jsx';
+import AnalyticsPage    from './pages/Analytics.jsx';
 
 function ComingSoon({ title }) {
   return (
@@ -35,7 +36,7 @@ const PAGE_META = {
   '/sales/import':       { title: 'Import',             sub: 'Upload Excel or CSV · bulk import contacts' },
   '/sales/enrichment':   { title: 'Enrichment',         sub: 'Contacts with missing data · fill gaps' },
   '/sales/conferences':  { title: 'Conference Library', sub: 'Event attendees · review and promote to leads' },
-  '/sales/analytics':    { title: 'Analytics',          sub: 'Country breakdown · source analysis · trends' },
+  '/sales/analytics':    { title: 'Analytics',          sub: 'Rep performance · country · pipeline · source' },
   '/sales/dedupe':       { title: 'Deduplicate',        sub: 'Review & remove duplicate contacts' },
   '/sales/settings':     { title: 'Settings',           sub: 'Manage reps, quotas and CRM configuration' },
 };
@@ -73,7 +74,7 @@ function Layout() {
           <Route path="/sales/import"        element={<ImportPage />} />
           <Route path="/sales/enrichment"    element={<EnrichmentPage />} />
           <Route path="/sales/conferences"   element={<ConferencesPage />} />
-          <Route path="/sales/analytics"     element={<ComingSoon title="Analytics" />} />
+          <Route path="/sales/analytics"     element={<AnalyticsPage />} />
           <Route path="/sales/dedupe"        element={<DedupeReview />} />
           <Route path="/sales/settings"      element={<SettingsPage />} />
           <Route path="*"                    element={<KanbanPage />} />
