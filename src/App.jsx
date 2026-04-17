@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import SalesProvider from './data/SalesContext.jsx';
 import SalesSidebar from './components/layout/SalesSidebar.jsx';
-import { MOD, PAGE_MOD } from './utils/moduleTheme.js';
+import { MOD, PAGE_MOD } from './utils/moduleTheme.jsx';
 
 import HomePage         from './pages/Home.jsx';
 import ContactsPage     from './pages/Contacts.jsx';
