@@ -1,5 +1,5 @@
 import React from 'react';
-import { ComingSoonPage } from '../utils/moduleTheme.js';
+import { ComingSoonPage } from '../utils/moduleTheme.jsx';
 
 export function LeadScoringPage() {
   return <ComingSoonPage mod="input" title="Lead Scoring"

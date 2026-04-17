@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../data/supabase.js';
 import { logAudit } from '../utils/audit.js';
 import { Toast } from '../components/UI.jsx';
-import { MOD, ModHeader, KpiStrip } from '../utils/moduleTheme.js';
+import { MOD, ModHeader, KpiStrip } from '../utils/moduleTheme.jsx';
 
 const m = MOD.input;
 
