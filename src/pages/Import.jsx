@@ -454,7 +454,7 @@ export default function ImportPage() {
                 list="expo-suggestions"
                 value={expo}
                 onChange={e => setExpo(e.target.value)}
-                placeholder="Type or select — e.g. Cosmet'Agora 2026"
+                placeholder="Type or select — e.g. Gartner IT Symposium 2026"
                 style={{width:'100%',border:'1px solid #D0D7E5',borderRadius:7,padding:'8px 10px',fontSize:12,background:'#fff',fontFamily:'inherit',boxSizing:'border-box'}}
               />
               <datalist id="expo-suggestions">
@@ -502,7 +502,7 @@ export default function ImportPage() {
                 list="expo-suggestions-2"
                 value={expo}
                 onChange={e => setExpo(e.target.value)}
-                placeholder="Enter exhibition name..."
+                placeholder="Enter conference name..."
                 style={{flex:1,border:'1px solid #FCD34D',borderRadius:6,padding:'5px 8px',fontSize:11,background:'#fff',fontFamily:'inherit'}}
               />
               <datalist id="expo-suggestions-2">
