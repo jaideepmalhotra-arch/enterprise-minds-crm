@@ -19,6 +19,7 @@ import ActivityFeedPage from './pages/ActivityFeed.jsx';
 import ConferencesPage  from './pages/Conferences.jsx';
 import AnalyticsPage    from './pages/Analytics.jsx';
 
+import AIEnrichmentPage from './pages/AIEnrichment.jsx';
 import {
   LeadScoringPage, DataExportPage,
   CampaignsPage, EmailSequencesPage, WhatsAppPage,
@@ -31,6 +32,7 @@ const PAGE_META = {
   '/sales/import':       { title:'Import',             sub:'Upload Excel or CSV · bulk import contacts' },
   '/sales/add-contact':  { title:'Add Contact',        sub:'Manually add a single lead' },
   '/sales/conferences':  { title:'Conference Library', sub:'Event attendees · review and promote to leads' },
+  '/sales/ai-enrichment': { title:'AI Enrichment',      sub:'Auto-research company profiles and tech stacks with Claude AI' },
   '/sales/lead-scoring': { title:'Lead Scoring',       sub:'Auto-score leads by role, size and engagement' },
   '/sales/export':       { title:'Data Export',        sub:'Export filtered contacts and pipeline to CSV' },
   '/sales/contacts':     { title:'Contacts',           sub:'Full contact database · search & manage' },
@@ -103,6 +105,7 @@ function Layout() {
           <Route path="/sales/analytics"     element={<AnalyticsPage />} />
           <Route path="/sales/dedupe"        element={<DedupeReview />} />
           <Route path="/sales/settings"      element={<SettingsPage />} />
+          <Route path="/sales/ai-enrichment"  element={<AIEnrichmentPage />} />
           <Route path="/sales/lead-scoring"  element={<LeadScoringPage />} />
           <Route path="/sales/export"        element={<DataExportPage />} />
           <Route path="/sales/campaigns"     element={<CampaignsPage />} />
