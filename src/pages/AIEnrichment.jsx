@@ -25,43 +25,18 @@ Given a company name and website, research the company and return ONLY a JSON ob
 Return ONLY valid JSON. No markdown backticks, no explanation, no extra text.`;
 
 async function enrichCompany(company, website) {
-  const prompt = `Research this company and return a JSON profile:
-Company: ${company}
-Website: ${website}
-
-Search the web to find current accurate information about their technology stack, company size, and digital operations.`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('/api/enrich', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: SYSTEM_PROMPT,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    body: JSON.stringify({ company, website }),
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${response.status}`);
+    throw new Error(err.error || `Server error ${response.status}`);
   }
 
-  const data = await response.json();
-  const textBlock = data.content.find(b => b.type === 'text');
-  if (!textBlock) throw new Error('No text in AI response');
-
-  let text = textBlock.text.trim();
-  text = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  try {
-    return JSON.parse(text);
-  } catch(e) {
-    // Try to extract JSON from mixed content
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error('Could not parse AI response as JSON');
-  }
+  return await response.json();
 }
 
 const BADGE_COLORS = [
