@@ -11,6 +11,7 @@ const MODULES = [
       { to:'/sales/import',       label:'Import',           icon:'⬆' },
       { to:'/sales/add-contact',  label:'Add Contact',      icon:'＋' },
       { to:'/sales/conferences',  label:'Conferences',      icon:'⬡', countKey:'exhibitors' },
+      { to:'/sales/ai-enrichment', label:'AI Enrichment',     icon:'✦' },
       { to:'/sales/lead-scoring', label:'Lead Scoring',     icon:'★', planned:true },
       { to:'/sales/export',       label:'Data Export',      icon:'↓', planned:true },
     ],
