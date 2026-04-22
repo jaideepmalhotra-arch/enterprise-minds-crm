@@ -211,7 +211,7 @@ export default function AIEnrichmentPage() {
         setResults(r => [...r, { lead, result: null, error: e.message, status: 'error' }]);
       }
       setProcessed(i + 1);
-      if (i < toProcess.length - 1) await new Promise(r => setTimeout(r, 600));
+      if (i < toProcess.length - 1) await new Promise(r => setTimeout(r, 4000));
     }
 
     setProcessing(false);
