@@ -1,618 +1,568 @@
 import React, { useState, useRef } from 'react';
 import { supabase } from '../data/supabase.js';
-import { Btn, Toast } from '../components/UI.jsx';
+import { Toast } from '../components/UI.jsx';
 import { logAudit } from '../utils/audit.js';
 
-function calcTier(row) {
+// ── Constants ────────────────────────────────────────────────────────────────
+const BATCH = 50;
+
+const TECH_CONFERENCE_SUGGESTIONS = [
+  'Gartner IT Symposium 2026', 'AWS re:Invent 2026', 'Microsoft Ignite 2026',
+  'Google Cloud Next 2026', 'Salesforce Dreamforce 2026', 'Web Summit 2026',
+  'Money 20/20 2026', 'Nasscom Technology & Leadership Forum 2026',
+  'Nasscom Product Conclave 2026', 'TechSparks 2026', 'CES 2027', 'Davos WEF 2027',
+];
+
+const BUYER_TITLES = [
+  'ceo','cto','cio','cdo','coo','chief','president','founder','co-founder',
+  'vp','vice president','svp','evp','head of','director','managing director',
+  'gm','general manager','partner','principal','owner','procurement',
+  'purchase','supply chain','it manager','technology manager','digital',
+];
+const NOT_RELEVANT_TITLES = [
+  'intern','student','assistant','coordinator','analyst','associate','junior',
+  'executive assistant','receptionist','admin','hr generalist',
+];
+const TARGET_INDUSTRIES = [
+  'technology','software','it ','information technology','banking','financial',
+  'insurance','healthcare','pharma','manufacturing','retail','ecommerce',
+  'logistics','telecom','media','education','consulting','professional services',
+];
+const NOT_RELEVANT_INDUSTRIES = [
+  'restaurant','food service','hospitality','tourism','agriculture','farming',
+  'construction','real estate','religion','non-profit','ngo',
+];
+
+function calcImportance(role = '', company = '', industry = '') {
+  const r = (role||'').toLowerCase();
+  const i = (industry||'').toLowerCase();
+  const c = (company||'').toLowerCase();
+  const signals = [];
+  let score = 0;
+
+  if (NOT_RELEVANT_TITLES.some(t => r.includes(t)))       return { importance: 'not_relevant', signals: ['Non-buyer title'] };
+  if (NOT_RELEVANT_INDUSTRIES.some(t => i.includes(t) || c.includes(t.split(' ')[0]))) return { importance: 'not_relevant', signals: ['Non-target industry'] };
+
+  if (BUYER_TITLES.some(t => r.includes(t)))      { score += 50; signals.push('Buyer title'); }
+  if (TARGET_INDUSTRIES.some(t => i.includes(t))) { score += 25; signals.push('Target industry'); }
+  if (r.includes('decision') || r.includes('strategy')) { score += 15; signals.push('Decision maker'); }
+  if (r.includes('digital') || r.includes('transform'))  { score += 10; signals.push('Digital focus'); }
+
+  if (score >= 70) return { importance: 'hot',      signals };
+  if (score >= 35) return { importance: 'warm',     signals };
+  if (score >= 10) return { importance: 'cold',     signals };
+  return { importance: 'not_set', signals };
+}
+
+function calcTier({ email, phone, contact, role, linkedin }) {
   let s = 0;
-  if (row.email) s++;
-  if (row.phone) s++;
-  if (row.contact) s++;
-  if (row.role) s++;
-  if (row.linkedin) s++;
-  if (s >= 4) return 'complete';
-  if (s >= 2) return 'partial';
-  if (s >= 1) return 'minimal';
-  return 'empty';
+  if (email) s++; if (phone) s++; if (contact) s++; if (role) s++; if (linkedin) s++;
+  if (s >= 4) return 'complete'; if (s >= 2) return 'partial'; if (s >= 1) return 'minimal'; return 'empty';
 }
 
 const COUNTRY_MAP = {
-  'us':'United States','usa':'United States','u.s.':'United States','u.s.a.':'United States',
-  'united states of america':'United States','america':'United States',
-  'uk':'United Kingdom','gb':'United Kingdom','u.k.':'United Kingdom','great britain':'United Kingdom','england':'United Kingdom','britain':'United Kingdom',
-  'uae':'UAE','u.a.e.':'UAE','united arab emirates':'UAE','dubai':'UAE','abu dhabi':'UAE',
-  'de':'Germany','deutschland':'Germany','fr':'France','es':'Spain','espana':'Spain','españa':'Spain',
-  'it':'Italy','italia':'Italy','nl':'Netherlands','holland':'Netherlands','the netherlands':'Netherlands',
-  'ch':'Switzerland','schweiz':'Switzerland','suisse':'Switzerland','be':'Belgium','belgique':'Belgium',
-  'in':'India','bharat':'India','cn':'China','prc':'China',"people's republic of china":'China',
-  'au':'Australia','ca':'Canada','br':'Brazil','brasil':'Brazil','mx':'Mexico','méxico':'Mexico',
-  'jp':'Japan','kr':'South Korea','korea':'South Korea','republic of korea':'South Korea',
-  'sg':'Singapore','se':'Sweden','sverige':'Sweden','dk':'Denmark','danmark':'Denmark',
-  'no':'Norway','norge':'Norway','fi':'Finland','suomi':'Finland','pl':'Poland','polska':'Poland',
-  'pt':'Portugal','ie':'Ireland','eire':'Ireland','cz':'Czechia','czech republic':'Czechia','czech':'Czechia',
-  'ru':'Russia','russian federation':'Russia','tr':'Turkey','turkiye':'Turkey','türkiye':'Turkey',
-  'sa':'Saudi Arabia','ksa':'Saudi Arabia','kingdom of saudi arabia':'Saudi Arabia',
-  'il':'Israel','eg':'Egypt','za':'South Africa','rsa':'South Africa','ng':'Nigeria','ke':'Kenya',
-  'ma':'Morocco','maroc':'Morocco',
+  'us':'United States','usa':'United States','u.s.a.':'United States','united states of america':'United States',
+  'uk':'United Kingdom','u.k.':'United Kingdom','great britain':'United Kingdom',
+  'uae':'UAE','u.a.e.':'UAE','united arab emirates':'UAE',
+  'in':'India','ind':'India',
+  'sg':'Singapore','sin':'Singapore',
+  'au':'Australia','aus':'Australia',
+  'de':'Germany','deu':'Germany',
+  'fr':'France','fra':'France',
+  'ca':'Canada','can':'Canada',
+  'jp':'Japan','jpn':'Japan',
+};
+function normalizeCountry(v) {
+  if (!v) return null;
+  const s = v.trim();
+  return COUNTRY_MAP[s.toLowerCase()] || s;
+}
+
+function cleanVal(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s || ['nan','null','undefined','none','n/a','#n/a','-'].includes(s.toLowerCase())) return null;
+  return s;
+}
+
+function isApolloFile(headers) {
+  return headers.some(h => ['apollo contact id','company name for emails','email confidence'].includes(h.toLowerCase()));
+}
+
+function autoMap(headers) {
+  const map = {};
+  const hl = headers.map(h => h.toLowerCase());
+  const find = (terms) => { const i = hl.findIndex(h => terms.some(t => h.includes(t))); return i >= 0 ? i : undefined; };
+  map.company   = find(['company name','company']);
+  map.email     = find(['email']);
+  map.phone     = find(['work direct phone','direct phone','phone','mobile']);
+  map.country   = find(['country']);
+  map.city      = find(['city']);
+  map.linkedin  = find(['linkedin url','linkedin']);
+  map.website   = find(['website','web site','url']);
+  map.industry  = find(['industry','sector']);
+  map.source    = find(['source','lead source']);
+  map.role      = find(['title','job title','role','position']);
+  map._firstname = find(['first name','firstname']);
+  map._lastname  = find(['last name','lastname']);
+  map.contact   = find(['contact','full name','name']);
+  return map;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+const m = {
+  pageBg: '#F2F7FD', headerBg: '#EBF4FD', border: '#B5D4F4',
+  accent: '#2563EB', textDark: '#0C447C', textMid: '#185FA5',
+  kpiBg: '#EBF4FD', kpiBorder: '#B5D4F4',
+  badgeBg: '#DBEAFE', badgeText: '#1E40AF',
 };
 
-const STANDARD_COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan","Bahrain","Bangladesh","Belarus","Belgium","Bolivia","Bosnia and Herzegovina","Brazil","Bulgaria","Cambodia","Cameroon","Canada","Chile","China","Colombia","Costa Rica","Croatia","Cuba","Cyprus","Czechia","Denmark","Dominican Republic","Ecuador","Egypt","El Salvador","Estonia","Ethiopia","Finland","France","Georgia","Germany","Ghana","Greece","Guatemala","Honduras","Hungary","India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kosovo","Kuwait","Latvia","Lebanon","Libya","Lithuania","Luxembourg","Malaysia","Malta","Mexico","Moldova","Morocco","Myanmar","Nepal","Netherlands","New Zealand","Nigeria","North Macedonia","Norway","Oman","Pakistan","Panama","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Saudi Arabia","Senegal","Serbia","Singapore","Slovakia","Slovenia","South Africa","South Korea","Spain","Sri Lanka","Sweden","Switzerland","Syria","Taiwan","Tanzania","Thailand","Tunisia","Turkey","UAE","Uganda","Ukraine","United Kingdom","United States","Uruguay","Uzbekistan","Venezuela","Vietnam","Yemen","Zimbabwe"];
-
-function normalizeCountry(raw) {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const exact = STANDARD_COUNTRIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
-  if (exact) return exact;
-  const mapped = COUNTRY_MAP[trimmed.toLowerCase()];
-  if (mapped) return mapped;
-  if (trimmed.length <= 2) return null;
-  if (trimmed.length <= 35 && !/[0-9,]/.test(trimmed) && !/street|avenue|road|blvd|drive|lane|suite/i.test(trimmed)) return trimmed;
-  return null;
-}
-
-const CONTACT_FIELDS   = ['company','contact','role','country','city','email','phone','linkedin','website','industry','source'];
-const EXHIBITOR_FIELDS = ['company','category','booth','country','website','contact','email','notes'];
-
-// Known exhibition names shown as datalist suggestions
-const EXPO_SUGGESTIONS = [
-  "Gartner IT Symposium 2026",
-  "AWS re:Invent 2026",
-  "Microsoft Ignite 2026",
-  "Google Cloud Next 2026",
-  "Salesforce Dreamforce 2026",
-  "Web Summit 2026",
-  "Money 20/20 2026",
-  "Nasscom Technology & Leadership Forum 2026",
-  "Nasscom Product Conclave 2026",
-  "TechSparks 2026",
-  "CES 2027",
-  "Davos WEF 2027",
-];
-
-// ─── CSV parser — handles multiline quoted fields ─────────────────────────────
-function parseCSV(str) {
-  const results = [];
-  let i = 0;
-  const n = str.length;
-  while (i < n) {
-    const row = [];
-    while (i < n) {
-      if (str[i] === '"') {
-        i++;
-        let cell = '';
-        while (i < n) {
-          const ch = str[i];
-          if (ch === '"') {
-            if (i + 1 < n && str[i + 1] === '"') { cell += '"'; i += 2; }
-            else { i++; break; }
-          } else { cell += ch; i++; }
-        }
-        row.push(cell.trim());
-      } else {
-        let cell = '';
-        while (i < n && str[i] !== ',' && str[i] !== '\n' && str[i] !== '\r') { cell += str[i]; i++; }
-        row.push(cell.trim());
-      }
-      if (i < n && str[i] === ',') { i++; }
-      else if (i < n && (str[i] === '\n' || str[i] === '\r')) {
-        if (str[i] === '\r' && i + 1 < n && str[i + 1] === '\n') i += 2;
-        else i++;
-        break;
-      } else { break; }
-    }
-    if (row.length > 0 && row.some(c => c !== '')) results.push(row);
-  }
-  return results;
-}
-
-// ─── Title-row detection ──────────────────────────────────────────────────────
-// Returns true if the first row looks like a title/merged cell rather than real headers.
-// Signals: only 1 non-empty cell, or cell contains the exhibition name / long descriptive text.
-function looksLikeTitleRow(row) {
-  const nonEmpty = row.filter(c => c && String(c).trim());
-  if (nonEmpty.length === 1) return true; // single merged title cell
-  // If >60% of cells are empty and the first cell is long text, it's a title
-  const firstCell = String(row[0] || '').trim();
-  if (nonEmpty.length <= 2 && firstCell.length > 20) return true;
-  return false;
-}
-
-// ─── Auto-mapper ──────────────────────────────────────────────────────────────
-function isApolloFile(hdrs) {
-  const joined = hdrs.map(h => h.toLowerCase()).join(',');
-  return joined.includes('apollo contact id') || joined.includes('person linkedin url') || joined.includes('company name for emails');
-}
-
-function autoMap(hdrs, isExhibitor) {
-  const m = {};
-
-  if (isApolloFile(hdrs)) {
-    hdrs.forEach((h, i) => {
-      const hl = h.toLowerCase().trim();
-      if (hl === 'first name') m._firstname = i;
-      else if (hl === 'last name') m._lastname = i;
-      else if (hl === 'company') m.company = i;
-      else if (hl === 'company name' && m.company === undefined) m.company = i;
-      else if (hl === 'title') m.role = i;
-      else if (hl === 'email') m.email = i;
-      else if (hl === 'first phone') m.phone = i;
-      else if (hl === 'work direct phone' && m.phone === undefined) m.phone = i;
-      else if (hl === 'corporate phone' && m.phone === undefined) m.phone = i;
-      else if (hl === 'mobile phone' && m.phone === undefined) m.phone = i;
-      else if (hl === 'person linkedin url') m.linkedin = i;
-      else if (hl === 'website') m.website = i;
-      else if (hl === 'country') m.country = i;
-      else if (hl === 'company country' && m.country === undefined) m.country = i;
-      else if (hl === 'city') m.city = i;
-      else if (hl === 'company city' && m.city === undefined) m.city = i;
-      else if (hl === 'industry') m.industry = i;
-    });
-    return m;
-  }
-
-  hdrs.forEach((h, i) => {
-    // Normalise: lowercase, strip spaces/punctuation
-    const hl = h.toLowerCase().replace(/[\s_\-\.#\(\)]/g, '');
-
-    // Skip pure index columns like "#", "no", "num"
-    if (['','no','num','sr','sno','index','row'].includes(hl)) return;
-
-    // Company — covers "Company", "Company Name", "CompanyName", "Organisation"
-    if (!m.company && (hl === 'company' || hl === 'companyname' || hl.includes('organisation') || hl === 'exhibitor')) {
-      m.company = i;
-    }
-    // Booth — covers "Booth", "Booth Number", "Booth Number(s)", "Stand", "Stall", "Hall"
-    else if (!m.booth && (hl.includes('booth') || hl.includes('stand') || hl.includes('stall') || hl === 'hall')) {
-      m.booth = i;
-    }
-    // Country
-    else if (!m.country && hl.includes('country')) {
-      m.country = i;
-    }
-    // Category / type (exhibitor mode only)
-    else if (isExhibitor && !m.category && (hl.includes('category') || hl.includes('sector') || hl.includes('type') || hl.includes('segment'))) {
-      m.category = i;
-    }
-    // Contact name
-    else if (!m.contact && !isExhibitor && (hl.includes('contact') || (hl.includes('name') && !hl.includes('company')))) {
-      m.contact = i;
-    }
-    // Role / title
-    else if (!m.role && !isExhibitor && (hl.includes('role') || hl.includes('title') || hl.includes('position') || hl.includes('jobtitle'))) {
-      m.role = i;
-    }
-    // Email
-    else if (!m.email && hl.includes('email')) {
-      m.email = i;
-    }
-    // Phone
-    else if (!m.phone && (hl.includes('phone') || hl.includes('mobile') || hl.includes('tel'))) {
-      m.phone = i;
-    }
-    // LinkedIn
-    else if (!m.linkedin && hl.includes('linkedin')) {
-      m.linkedin = i;
-    }
-    // Website
-    else if (!m.website && (hl.includes('website') || hl.includes('web') || hl.includes('domain') || hl.includes('url'))) {
-      m.website = i;
-    }
-    // Industry
-    else if (!m.industry && (hl.includes('industry') || hl.includes('sector'))) {
-      m.industry = i;
-    }
-    // Source
-    else if (!m.source && hl.includes('source')) {
-      m.source = i;
-    }
-    // Notes
-    else if (!m.notes && hl.includes('note')) {
-      m.notes = i;
-    }
-    // City
-    else if (!m.city && hl.includes('city')) {
-      m.city = i;
-    }
-  });
-
-  return m;
-}
-
-function detectMode(hdrs) {
-  const joined = hdrs.map(h => h.toLowerCase()).join(' ');
-  if (joined.includes('stand') || joined.includes('booth') || joined.includes('exhibitor')) return 'exhibitors';
-  return 'contacts';
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function ImportPage() {
-  const [step,      setStep]      = useState(1);
-  const [mode,      setMode]      = useState(null);
-  const [expo,      setExpo]      = useState('');
-  const [file,      setFile]      = useState(null);
-  const [headers,   setHeaders]   = useState([]);
-  const [preview,   setPreview]   = useState([]);
-  const [rawRows,   setRawRows]   = useState([]);
-  const [mapping,   setMapping]   = useState({});
-  const [importing, setImporting] = useState(false);
-  const [result,    setResult]    = useState(null);
-  const [toast,     setToast]     = useState(null);
+  const [step,         setStep]         = useState(1);
+  const [mode,         setMode]         = useState(null);      // contacts | exhibitors
+  const [file,         setFile]         = useState(null);
+  const [headers,      setHeaders]      = useState([]);
+  const [preview,      setPreview]      = useState([]);
+  const [rawRows,      setRawRows]      = useState([]);
+  const [mapping,      setMapping]      = useState({});
+  const [expo,         setExpo]         = useState('');
+  const [expoSuggest,  setExpoSuggest]  = useState(false);
+  const [processing,   setProcessing]   = useState(false);
+  const [stagingResult,setStagingResult]= useState(null);
+  const [merging,      setMerging]      = useState(false);
+  const [result,       setResult]       = useState(null);
+  const [toast,        setToast]        = useState(null);
+  const [batchId,      setBatchId]      = useState(null);
+  const [impBreakdown, setImpBreakdown] = useState(null);
   const fileRef = useRef();
 
-  const showToast = (msg, type='success') => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
-  function reset() { setStep(1); setMode(null); setFile(null); setHeaders([]); setPreview([]); setRawRows([]); setMapping({}); setResult(null); }
+  const showToast = (msg, type='success') => { setToast({msg,type}); setTimeout(()=>setToast(null),4000); };
 
-  async function handleFile(f) {
-    if (!f) return;
-    setFile(f);
-    const ext = f.name.split('.').pop().toLowerCase();
-    try {
-      let hdrs = [], allRows = [], prevRows = [];
-
-      if (ext === 'csv') {
-        const text = await f.text();
-        const parsed = parseCSV(text);
-
-        // Title-row detection: if first row looks like a title, skip it
-        let startIdx = 0;
-        if (parsed.length > 1 && looksLikeTitleRow(parsed[0])) startIdx = 1;
-
-        hdrs = parsed[startIdx].map(h => h.replace(/^"+|"+$/g, '').trim());
-        allRows = parsed.slice(startIdx + 1).map(r => r.map(v => v.replace(/^"+|"+$/g, '').trim()));
-        prevRows = allRows.slice(0, 5);
-
-      } else {
-        const buf = await f.arrayBuffer();
-        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
-        const wb = XLSX.read(buf, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
-
-        // Title-row detection for Excel
-        let startIdx = 0;
-        if (data.length > 1 && looksLikeTitleRow(data[0].map(c => String(c||'')))) startIdx = 1;
-
-        hdrs = data[startIdx].map(h => String(h||'').trim());
-        allRows = data.slice(startIdx + 1).map(r => hdrs.map((_, i) => String(r[i]||'').trim()));
-        prevRows = allRows.slice(0, 5);
-      }
-
-      // Filter out completely empty rows
-      allRows = allRows.filter(r => r.some(c => c && c.trim()));
-
-      // Respect manual mode selection — only auto-detect if user hasn't chosen yet
-      const detectedMode = mode || detectMode(hdrs);
-      setHeaders(hdrs);
-      setPreview(prevRows);
-      setRawRows(allRows);
-      setMode(detectedMode);
-      setMapping(autoMap(hdrs, detectedMode === 'exhibitors'));
-      setStep(2);
-    } catch(e) { showToast('Error reading file: ' + e.message, 'error'); }
+  function reset() {
+    setStep(1); setMode(null); setFile(null); setHeaders([]); setPreview([]);
+    setRawRows([]); setMapping({}); setExpo(''); setStagingResult(null);
+    setResult(null); setBatchId(null); setImpBreakdown(null); setProcessing(false);
   }
 
-  async function doImport() {
-    setImporting(true);
-    setStep(3);
-    let imported = 0, errors = 0;
-    const BATCH = 30;
-    const isApollo = headers.some(h => h.toLowerCase().includes('apollo contact id') || h.toLowerCase().includes('company name for emails'));
-    const expoName = expo.trim() || 'Unknown Exhibition';
+  // ── File parse ──────────────────────────────────────────────────────────────
+  async function onFile(f) {
+    setFile(f);
+    const ext = f.name.split('.').pop().toLowerCase();
+    let rows = [];
 
-    if (mode === 'exhibitors') {
-      const mapped = rawRows.map(row => {
-        const get = k => mapping[k] !== undefined ? String(row[mapping[k]]||'').trim() : '';
-        const company = get('company');
-        if (!company) return null;
-        return {
-          exhibition: expoName,
-          company,
-          category:  get('category')||null,
-          booth:     get('booth')||null,
-          country:   normalizeCountry(get('country')),
-          website:   get('website')||null,
-          contact:   get('contact')||null,
-          email:     get('email')||null,
-          notes:     get('notes')||null,
-          status:    'new',
-          imported_at: new Date().toISOString(),
-        };
-      }).filter(Boolean);
-
-      for (let i = 0; i < mapped.length; i += BATCH) {
-        const batch = mapped.slice(i, i + BATCH);
-        try {
-          const { error } = await supabase.from('exhibitors').insert(batch);
-          if (error) { errors += batch.length; console.error(error.message); }
-          else imported += batch.length;
-        } catch(e) { errors += batch.length; }
-        await new Promise(r => setTimeout(r, 60));
-      }
-    } else {
-      // ── Clean + map rows ─────────────────────────────────────────────────
-      const clean = v => {
-        if (!v) return null;
-        const s = String(v).trim();
-        if (!s || s.toLowerCase() === 'nan' || s === 'undefined' || s === 'null') return null;
-        return s;
+    if (ext === 'csv') {
+      const text = await f.text();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      const parseCSV = line => {
+        const out = []; let cur = ''; let inQ = false;
+        for (const ch of line) {
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === ',' && !inQ) { out.push(cur.trim()); cur = ''; }
+          else cur += ch;
+        }
+        out.push(cur.trim()); return out;
       };
+      // Skip title rows
+      let start = 0;
+      for (let i = 0; i < Math.min(5, lines.length); i++) {
+        if (parseCSV(lines[i]).length > 3) { start = i; break; }
+      }
+      const hdrs = parseCSV(lines[start]).map(h => h.replace(/^["'\s]+|["'\s]+$/g,''));
+      rows = lines.slice(start+1).filter(Boolean).map(l => {
+        const vals = parseCSV(l);
+        return Object.fromEntries(hdrs.map((h,i) => [h, vals[i]||'']));
+      });
+      setHeaders(hdrs);
+      setMapping(autoMap(hdrs));
+    } else {
+      // XLSX via CDN
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+      const buf  = await f.arrayBuffer();
+      const wb   = XLSX.read(buf, { type:'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      let startRow = 0;
+      for (let i = 0; i < Math.min(5, data.length); i++) {
+        if (data[i].filter(Boolean).length > 3) { startRow = i; break; }
+      }
+      const hdrs = data[startRow].map(h => String(h).trim());
+      rows = data.slice(startRow+1).map(r => Object.fromEntries(hdrs.map((h,i) => [h, String(r[i]||'').trim()])));
+      setHeaders(hdrs);
+      setMapping(autoMap(hdrs));
+    }
 
-      const mapped = [];
+    setRawRows(rows);
+    setPreview(rows.slice(0, 5));
+
+    // Auto-detect mode
+    const hdrs = Object.keys(rows[0]||{});
+    const isExhibitor = hdrs.some(h => ['booth','stand','category','exhibition'].includes(h.toLowerCase()));
+    if (isExhibitor) setMode('exhibitors');
+    else setMode('contacts');
+
+    setStep(2);
+  }
+
+  // ── Process: map → stage → dedup ───────────────────────────────────────────
+  async function doProcess() {
+    setProcessing(true);
+    setStep(3);
+    const bid = `batch_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+    setBatchId(bid);
+
+    try {
+      const apollo = isApolloFile(headers);
+      const stagingRows = [];
+      const iBreakdown = { hot:0, warm:0, cold:0, not_relevant:0, not_set:0 };
+
       for (const row of rawRows) {
-        const get = k => mapping[k] !== undefined ? String(row[mapping[k]]||'').trim() : '';
-        const company = clean(get('company'));
+        const get = k => mapping[k] !== undefined ? cleanVal(String(row[Object.keys(row)[mapping[k]]]||'')) : null;
+        const company = get('company');
         if (!company) continue;
-        let contact = clean(get('contact'));
-        if (isApollo && mapping['_firstname'] !== undefined) {
-          const fn = clean(String(row[mapping['_firstname']]||''));
-          const ln = clean(String(row[mapping['_lastname']]||''));
+
+        let contact = get('contact');
+        if (apollo && mapping['_firstname'] !== undefined) {
+          const fn = cleanVal(String(row[Object.keys(row)[mapping['_firstname']]]||''));
+          const ln = cleanVal(String(row[Object.keys(row)[mapping['_lastname']]]||''));
           if (fn || ln) contact = [fn,ln].filter(Boolean).join(' ');
         }
-        const email   = clean(get('email'));
-        const phone   = clean(get('phone'))?.replace(/^'+/, '').trim() || null;
-        const linkedin = clean(get('linkedin'));
-        const role    = clean(get('role'));
-        mapped.push({
-          company,
-          contact:      contact || null,
-          role:         role || null,
-          country:      normalizeCountry(get('country')),
-          city:         clean(get('city')) || null,
-          email:        email || null,
-          phone:        phone || null,
-          linkedin:     linkedin || null,
-          website:      clean(get('website')) || null,
-          industry:     clean(get('industry')) || null,
-          source:       clean(get('source')) || null,
-          tier:         calcTier({ email, phone, contact, role, linkedin }),
-          imported_at:  new Date().toISOString(),
-          last_synced:  new Date().toISOString(),
+
+        const email    = get('email');
+        const phone    = get('phone')?.replace(/^'+/,'').trim() || null;
+        const linkedin = get('linkedin');
+        const role     = get('role');
+        const country  = normalizeCountry(get('country'));
+        const industry = get('industry');
+        const imp      = calcImportance(role||'', company||'', industry||'');
+        iBreakdown[imp.importance] = (iBreakdown[imp.importance]||0) + 1;
+
+        stagingRows.push({
+          import_batch_id: bid,
+          company, contact, role, email, phone, linkedin,
+          country, city: get('city'),
+          website: get('website'),
+          industry, source: get('source') || (mode === 'exhibitors' ? expo : 'Apollo'),
+          importance: imp.importance,
+          tier: calcTier({ email, phone, contact, role, linkedin }),
+          status: 'pending',
         });
       }
 
-      // ── Dedup within file ────────────────────────────────────────────────
-      let skipped = 0;
-      const seenEmails   = new Set();
-      const seenNameKeys = new Set();
-      const fileDeduped  = mapped.filter(row => {
-        const ek = row.email ? row.email.toLowerCase() : null;
-        const nk = (row.company && row.contact) ? (row.company + '|||' + row.contact).toLowerCase() : null;
-        if (ek && seenEmails.has(ek))   { skipped++; return false; }
-        if (nk && seenNameKeys.has(nk)) { skipped++; return false; }
-        if (ek) seenEmails.add(ek);
-        if (nk) seenNameKeys.add(nk);
-        return true;
-      });
+      setImpBreakdown(iBreakdown);
 
-      // ── Insert in batches — skip entire batch if conflict ───────────────────
-      for (let i = 0; i < fileDeduped.length; i += BATCH) {
-        const batch = fileDeduped.slice(i, i + BATCH);
-        try {
-          const { error } = await supabase.from('leads').insert(batch);
-          if (error) {
-            if (error.code === '23505' || error.message?.includes('conflict') || error.message?.includes('duplicate')) {
-              // Batch has duplicates — skip whole batch, count as skipped
-              skipped += batch.length;
-            } else {
-              errors += batch.length;
-              console.error('Insert error:', error.message, error.code);
-            }
-          } else {
-            imported += batch.length;
-          }
-        } catch(e) { errors += batch.length; }
+      // Insert to staging in batches
+      for (let i = 0; i < stagingRows.length; i += BATCH) {
+        const { error } = await supabase.from('leads_staging').insert(stagingRows.slice(i, i+BATCH));
+        if (error) throw error;
         await new Promise(r => setTimeout(r, 30));
       }
-    }
 
-    setResult({ imported, errors, skipped: skipped || 0, mode, total: rawRows.length });
-    logAudit('import_contacts',
-      `Import: ${imported} ${mode} imported, ${skipped} skipped, ${errors} errors`,
-      { imported, skipped, errors, mode, total: rawRows.length }
-    );
-    setImporting(false);
-    setStep(4);
+      // Sync companies first
+      await supabase.rpc('sync_staging_companies', { p_batch_id: bid });
+
+      // Run dedup
+      const { data: dedupData, error: dedupErr } = await supabase.rpc('process_staging_dedup', { p_batch_id: bid });
+      if (dedupErr) throw dedupErr;
+
+      setStagingResult(dedupData);
+      setStep(4);
+    } catch(e) {
+      showToast('Processing failed: ' + e.message, 'error');
+      setStep(2);
+    } finally {
+      setProcessing(false);
+    }
   }
 
-  const fields = mode === 'exhibitors' ? EXHIBITOR_FIELDS : CONTACT_FIELDS;
+  // ── Merge ────────────────────────────────────────────────────────────────────
+  async function doMerge(includeFlagged = false) {
+    setMerging(true);
+    try {
+      const { data, error } = await supabase.rpc('merge_staging_batch', {
+        p_batch_id:       batchId,
+        p_include_flagged: includeFlagged,
+      });
+      if (error) throw error;
+
+      logAudit('import_contacts',
+        `Imported ${data.inserted} contacts (${includeFlagged ? 'incl flagged' : 'clean only'})`,
+        { batch_id: batchId, inserted: data.inserted, staging: stagingResult }
+      );
+
+      setResult({ inserted: data.inserted, stagingResult, impBreakdown });
+      setStep(5);
+    } catch(e) {
+      showToast('Merge failed: ' + e.message, 'error');
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  const STEPS = ['Upload file','Map columns','Processing','Review & merge','Done'];
+
+  const IMP_CONFIG = {
+    hot:          { label:'🔴 Hot',          bg:'#FEF2F2', color:'#991B1B', desc:'Senior buyer in target industry' },
+    warm:         { label:'🟡 Warm',         bg:'#FFFBEB', color:'#92600A', desc:'Decision maker or adjacent' },
+    cold:         { label:'🔵 Cold',         bg:'#EFF6FF', color:'#1E40AF', desc:'Weak signals' },
+    not_relevant: { label:'⬜ Not relevant', bg:'#F1F5F9', color:'#475569', desc:'Non-buyer or wrong industry' },
+    not_set:      { label:'⚪ Not set',      bg:'#F8FAFC', color:'#94A3B8', desc:'No role/industry data' },
+  };
 
   return (
-    <div style={{padding:'16px 20px', maxWidth:800}}>
-
-      {/* Step indicator */}
-      <div style={{display:'flex',gap:0,marginBottom:24,background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,overflow:'hidden'}}>
-        {['Upload file','Map columns','Importing','Done'].map((label,i) => (
-          <div key={i} style={{flex:1,padding:'10px 16px',background:step===i+1?'#0D1F3C':step>i+1?'#ECFDF5':'#F8FAFC',color:step===i+1?'#fff':step>i+1?'#065F46':'#94A3B8',fontSize:12,fontWeight:step===i+1?700:500,textAlign:'center',borderRight:i<3?'1px solid #E4E8F0':'none'}}>
-            {step>i+1?'✓ ':''}{label}
-          </div>
-        ))}
+    <div style={{ background: m.pageBg, minHeight:'100vh' }}>
+      {/* Module header */}
+      <div style={{ background: m.headerBg, borderBottom:`1px solid ${m.border}`, padding:'14px 20px 12px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+          <span style={{ padding:'2px 10px', borderRadius:20, fontSize:10, fontWeight:700, background:m.badgeBg, color:m.badgeText }}>📥 Input</span>
+          <span style={{ color:m.border }}>/</span>
+          <span style={{ fontSize:13, fontWeight:700, color:m.textDark }}>Import</span>
+        </div>
+        <div style={{ fontSize:11, color:m.textMid }}>Upload CSV or Excel · auto-dedup · company sync · importance rating</div>
       </div>
 
-      {/* ── Step 1: Upload ── */}
-      {step===1 && (
-        <div>
-          {/* Mode selector */}
-          <div style={{display:'flex',gap:8,marginBottom:16}}>
-            <div onClick={()=>setMode('contacts')} style={{flex:1,padding:'16px',background:mode==='contacts'?'#EFF6FF':'#fff',border:'1px solid '+(mode==='contacts'?'#0D1F3C':'#E4E8F0'),borderRadius:9,cursor:'pointer',textAlign:'center'}}>
-              <div style={{fontSize:24,marginBottom:6}}>👥</div>
-              <div style={{fontSize:13,fontWeight:700,color:'#0D1F3C'}}>Contacts</div>
-              <div style={{fontSize:11,color:'#64748B'}}>Apollo, LinkedIn, trade shows CSV/Excel</div>
+      <div style={{ padding:'16px 20px' }}>
+        {/* Step indicator */}
+        <div style={{ display:'flex', background:'#fff', border:`1px solid ${m.border}`, borderRadius:10, overflow:'hidden', marginBottom:20 }}>
+          {STEPS.map((label,i) => (
+            <div key={i} style={{ flex:1, padding:'10px 8px', textAlign:'center', fontSize:11, fontWeight: step===i+1?700:400,
+              background: step===i+1?m.accent : step>i+1?'#ECFDF5':'#F8FAFC',
+              color: step===i+1?'#fff' : step>i+1?'#065F46':'#94A3B8',
+              borderRight: i<4?`1px solid ${m.border}`:'none' }}>
+              {step>i+1?'✓ ':''}{label}
             </div>
-            <div onClick={()=>setMode('exhibitors')} style={{flex:1,padding:'16px',background:mode==='exhibitors'?'#EFF6FF':'#fff',border:'1px solid '+(mode==='exhibitors'?'#0D1F3C':'#E4E8F0'),borderRadius:9,cursor:'pointer',textAlign:'center'}}>
-              <div style={{fontSize:24,marginBottom:6}}>🏢</div>
-              <div style={{fontSize:13,fontWeight:700,color:'#0D1F3C'}}>Event</div>
-              <div style={{fontSize:11,color:'#64748B'}}>Conference or event attendee list</div>
+          ))}
+        </div>
+
+        {/* ── Step 1: Upload ── */}
+        {step===1 && (
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+            {/* Contacts */}
+            <div onClick={() => { setMode('contacts'); fileRef.current?.click(); }}
+              style={{ background:'#fff', border:`2px dashed ${mode==='contacts'?m.accent:m.border}`, borderRadius:12, padding:32, textAlign:'center', cursor:'pointer', transition:'all .15s' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = m.accent}
+              onMouseLeave={e => e.currentTarget.style.borderColor = mode==='contacts'?m.accent:m.border}>
+              <div style={{ fontSize:32, marginBottom:12 }}>👥</div>
+              <div style={{ fontSize:15, fontWeight:700, color:m.textDark, marginBottom:6 }}>Contacts</div>
+              <div style={{ fontSize:12, color:m.textMid }}>Apollo, LinkedIn, any CSV/Excel</div>
+              <div style={{ fontSize:11, color:'#94A3B8', marginTop:6 }}>Auto-detects Apollo format</div>
+            </div>
+            {/* Events */}
+            <div style={{ background:'#fff', border:`2px dashed ${m.border}`, borderRadius:12, padding:32 }}>
+              <div style={{ fontSize:32, marginBottom:10, textAlign:'center' }}>🏢</div>
+              <div style={{ fontSize:15, fontWeight:700, color:m.textDark, marginBottom:10, textAlign:'center' }}>Event / Conference</div>
+              <div style={{ fontSize:11, color:m.textMid, marginBottom:10 }}>Exhibition name</div>
+              <div style={{ position:'relative' }}>
+                <input value={expo} onChange={e => { setExpo(e.target.value); setExpoSuggest(true); }}
+                  onFocus={() => setExpoSuggest(true)} onBlur={() => setTimeout(()=>setExpoSuggest(false),200)}
+                  placeholder="e.g. Gartner IT Symposium 2026"
+                  style={{ width:'100%', border:`1px solid ${m.border}`, borderRadius:8, padding:'7px 10px', fontSize:12, fontFamily:'inherit', boxSizing:'border-box' }} />
+                {expoSuggest && expo.length === 0 && (
+                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:`1px solid ${m.border}`, borderRadius:8, boxShadow:'0 4px 12px rgba(0,0,0,.1)', zIndex:50, maxHeight:200, overflowY:'auto' }}>
+                    {TECH_CONFERENCE_SUGGESTIONS.map(s => (
+                      <div key={s} onClick={() => { setExpo(s); setMode('exhibitors'); }}
+                        style={{ padding:'8px 12px', fontSize:12, cursor:'pointer', color:m.textDark }}
+                        onMouseEnter={e => e.currentTarget.style.background=m.kpiBg}
+                        onMouseLeave={e => e.currentTarget.style.background='#fff'}>{s}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div onClick={() => { if(!expo.trim()){showToast('Enter exhibition name first','warn');return;} setMode('exhibitors'); fileRef.current?.click(); }}
+                style={{ marginTop:12, padding:'8px 0', background:m.accent, color:'#fff', borderRadius:8, textAlign:'center', fontSize:12, fontWeight:600, cursor:'pointer' }}>
+                Upload exhibitor file
+              </div>
+            </div>
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display:'none' }}
+              onChange={e => { if(e.target.files[0]) onFile(e.target.files[0]); e.target.value=''; }} />
+          </div>
+        )}
+
+        {/* ── Step 2: Map columns ── */}
+        {step===2 && headers.length > 0 && (
+          <div>
+            <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:12, padding:'16px 18px', marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:m.textDark, marginBottom:12 }}>
+                {file?.name} · {rawRows.length.toLocaleString()} rows · {isApolloFile(headers) ? '✦ Apollo detected' : 'Standard format'}
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+                {['company','contact','email','phone','role','country','city','linkedin','website','industry','source'].map(field => (
+                  <div key={field}>
+                    <div style={{ fontSize:10, fontWeight:600, color:m.textMid, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>{field}</div>
+                    <select value={mapping[field]??''} onChange={e => setMapping(p=>({...p,[field]:e.target.value===''?undefined:Number(e.target.value)}))}
+                      style={{ width:'100%', border:`1px solid ${m.border}`, borderRadius:6, padding:'5px 8px', fontSize:11, background:'#fff', fontFamily:'inherit' }}>
+                      <option value="">— skip —</option>
+                      {headers.map((h,i) => <option key={i} value={i}>{h}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Preview */}
+            <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:10, overflow:'hidden', marginBottom:14 }}>
+              <div style={{ padding:'8px 14px', background:m.kpiBg, borderBottom:`1px solid ${m.border}`, fontSize:10, fontWeight:700, color:m.textMid, textTransform:'uppercase' }}>Preview (5 rows)</div>
+              <div style={{ overflowX:'auto' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                  <thead><tr>
+                    {['Company','Contact','Email','Role','Country','Importance'].map(h => (
+                      <th key={h} style={{ padding:'6px 10px', background:'#F8FAFC', borderBottom:`1px solid ${m.border}`, textAlign:'left', fontSize:9, color:m.textMid, fontWeight:600, textTransform:'uppercase', letterSpacing:'.06em' }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {preview.map((row,i) => {
+                      const get = k => mapping[k]!==undefined ? cleanVal(String(row[Object.keys(row)[mapping[k]]]||'')) : null;
+                      const apollo = isApolloFile(headers);
+                      let contact = get('contact');
+                      if (apollo && mapping['_firstname']!==undefined) {
+                        const fn = cleanVal(String(row[Object.keys(row)[mapping['_firstname']]]||''));
+                        const ln = cleanVal(String(row[Object.keys(row)[mapping['_lastname']]]||''));
+                        if (fn||ln) contact = [fn,ln].filter(Boolean).join(' ');
+                      }
+                      const imp = calcImportance(get('role')||'', get('company')||'', get('industry')||'');
+                      const ic = IMP_CONFIG[imp.importance];
+                      return (
+                        <tr key={i}>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9', fontWeight:600, color:m.textDark }}>{get('company')||'—'}</td>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9', color:'#475569' }}>{contact||'—'}</td>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9', color:'#475569' }}>{get('email')||'—'}</td>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9', color:'#475569' }}>{get('role')||'—'}</td>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9', color:'#475569' }}>{normalizeCountry(get('country'))||'—'}</td>
+                          <td style={{ padding:'6px 10px', borderBottom:'1px solid #F1F5F9' }}>
+                            <span style={{ padding:'2px 8px', borderRadius:20, fontSize:9, fontWeight:700, background:ic.bg, color:ic.color }}>{ic.label}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={reset} style={{ padding:'8px 16px', border:`1px solid ${m.border}`, borderRadius:8, fontSize:12, cursor:'pointer', background:'#fff', color:m.textMid, fontFamily:'inherit' }}>← Back</button>
+              <button onClick={doProcess} style={{ padding:'8px 24px', background:m.accent, color:'#fff', border:'none', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+                Process {rawRows.length.toLocaleString()} rows →
+              </button>
             </div>
           </div>
+        )}
 
-          {/* Exhibition name — free text + suggestions */}
-          {mode==='exhibitors' && (
-            <div style={{background:'#F8FAFC',border:'1px solid #E4E8F0',borderRadius:9,padding:'14px 16px',marginBottom:16}}>
-              <div style={{fontSize:11,fontWeight:700,color:'#64748B',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Exhibition name</div>
-              <input
-                list="expo-suggestions"
-                value={expo}
-                onChange={e => setExpo(e.target.value)}
-                placeholder="Type or select — e.g. Gartner IT Symposium 2026"
-                style={{width:'100%',border:'1px solid #D0D7E5',borderRadius:7,padding:'8px 10px',fontSize:12,background:'#fff',fontFamily:'inherit',boxSizing:'border-box'}}
-              />
-              <datalist id="expo-suggestions">
-                {EXPO_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-              </datalist>
-              {expo.trim() && (
-                <div style={{fontSize:10,color:'#64748B',marginTop:6}}>
-                  Exhibitors will be tagged as: <strong style={{color:'#0D1F3C'}}>{expo.trim()}</strong>
+        {/* ── Step 3: Processing ── */}
+        {step===3 && (
+          <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:12, padding:48, textAlign:'center' }}>
+            <div style={{ fontSize:28, marginBottom:14 }}>⋯</div>
+            <div style={{ fontSize:15, fontWeight:700, color:m.textDark, marginBottom:6 }}>Processing {rawRows.length.toLocaleString()} rows…</div>
+            <div style={{ fontSize:12, color:m.textMid, marginBottom:4 }}>Staging · syncing companies · checking duplicates</div>
+            <div style={{ height:6, background:m.kpiBg, borderRadius:3, marginTop:20, overflow:'hidden' }}>
+              <div style={{ height:'100%', background:m.accent, borderRadius:3, width:'100%', animation:'progress 2s ease-in-out infinite' }}/>
+            </div>
+            <style>{`@keyframes progress{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}</style>
+          </div>
+        )}
+
+        {/* ── Step 4: Review & Merge ── */}
+        {step===4 && stagingResult && (
+          <div>
+            {/* Dedup results */}
+            <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+              <div style={{ padding:'12px 18px', background:m.kpiBg, borderBottom:`1px solid ${m.border}`, fontSize:13, fontWeight:700, color:m.textDark }}>
+                Dedup results — {stagingResult.total} rows checked
+              </div>
+              <div style={{ display:'flex', gap:0 }}>
+                {[
+                  ['✅ Clean',   stagingResult.clean,   '#ECFDF5','#065F46', 'Ready to import'],
+                  ['🟡 Flagged', stagingResult.flagged, '#FFFBEB','#92600A', 'Same name+company'],
+                  ['🔴 Blocked', stagingResult.blocked, '#FEF2F2','#991B1B', 'Exact email/LinkedIn match'],
+                ].map(([label,count,bg,color,desc]) => (
+                  <div key={label} style={{ flex:1, padding:'16px 18px', background:bg, borderRight:`1px solid ${m.border}` }}>
+                    <div style={{ fontSize:24, fontWeight:700, color, marginBottom:4 }}>{count}</div>
+                    <div style={{ fontSize:12, fontWeight:600, color, marginBottom:2 }}>{label}</div>
+                    <div style={{ fontSize:10, color:'#64748B' }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Importance breakdown */}
+            {impBreakdown && (
+              <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+                <div style={{ padding:'12px 18px', background:m.kpiBg, borderBottom:`1px solid ${m.border}`, fontSize:13, fontWeight:700, color:m.textDark }}>
+                  Importance auto-rating
+                </div>
+                <div style={{ display:'flex', gap:0 }}>
+                  {Object.entries(IMP_CONFIG).map(([k,ic]) => (
+                    impBreakdown[k] > 0 && (
+                      <div key={k} style={{ flex:1, padding:'14px 16px', background:ic.bg, borderRight:`1px solid ${m.border}` }}>
+                        <div style={{ fontSize:20, fontWeight:700, color:ic.color, marginBottom:2 }}>{impBreakdown[k]}</div>
+                        <div style={{ fontSize:11, fontWeight:600, color:ic.color }}>{ic.label}</div>
+                        <div style={{ fontSize:10, color:'#64748B', marginTop:2 }}>{ic.desc}</div>
+                      </div>
+                    )
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+              {stagingResult.clean > 0 && (
+                <button onClick={() => doMerge(false)} disabled={merging}
+                  style={{ padding:'10px 24px', background:'#059669', color:'#fff', border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:merging?'not-allowed':'pointer', fontFamily:'inherit', opacity:merging?.6:1 }}>
+                  {merging ? 'Importing…' : `✅ Import ${stagingResult.clean} clean contacts`}
+                </button>
+              )}
+              {stagingResult.flagged > 0 && (
+                <button onClick={() => doMerge(true)} disabled={merging}
+                  style={{ padding:'10px 20px', background:'#F59E0B', color:'#fff', border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:merging?'not-allowed':'pointer', fontFamily:'inherit', opacity:merging?.6:1 }}>
+                  {merging ? '…' : `🟡 Import all incl. ${stagingResult.flagged} flagged`}
+                </button>
+              )}
+              {stagingResult.clean === 0 && stagingResult.flagged === 0 && (
+                <div style={{ padding:'10px 18px', background:'#FEF2F2', border:'1px solid #FCA5A5', borderRadius:8, fontSize:13, color:'#991B1B', fontWeight:600 }}>
+                  All {stagingResult.blocked} contacts already exist in your database
                 </div>
               )}
+              <button onClick={reset} style={{ padding:'10px 16px', border:`1px solid ${m.border}`, borderRadius:8, fontSize:12, cursor:'pointer', background:'#fff', color:m.textMid, fontFamily:'inherit' }}>
+                Cancel
+              </button>
             </div>
-          )}
 
-          {/* Drop zone */}
-          <div style={{background:'#fff',border:'2px dashed #D0D7E5',borderRadius:12,padding:40,textAlign:'center',cursor:'pointer'}}
-            onClick={()=>fileRef.current.click()}
-            onDragOver={e=>e.preventDefault()}
-            onDrop={e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);}}>
-            <div style={{fontSize:36,marginBottom:10}}>↑</div>
-            <div style={{fontSize:14,fontWeight:700,color:'#0D1F3C',marginBottom:5}}>Drop your file here</div>
-            <div style={{fontSize:12,color:'#64748B',marginBottom:14}}>Supports Excel (.xlsx) and CSV files</div>
-            <div style={{display:'inline-block',padding:'7px 18px',background:'#0D1F3C',color:'#fff',borderRadius:8,fontSize:12,fontWeight:600}}>Browse file</div>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
+            {stagingResult.blocked > 0 && (
+              <div style={{ marginTop:12, padding:'10px 14px', background:'#FEF2F2', border:'1px solid #FCA5A5', borderRadius:8, fontSize:12, color:'#991B1B' }}>
+                🔴 {stagingResult.blocked} contacts blocked — exact email or LinkedIn match already in database
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Step 2: Map columns ── */}
-      {step===2 && (
-        <div>
-          {/* File info */}
-          <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,padding:16,marginBottom:14}}>
-            <div style={{fontSize:13,fontWeight:700,color:'#0D1F3C',marginBottom:2}}>{file?.name}</div>
-            <div style={{fontSize:12,color:'#64748B'}}>
-              {rawRows.length} rows · {headers.length} columns · importing as{' '}
-              <strong>{mode==='exhibitors' ? (expo.trim()||'Exhibitors') : 'Contacts'}</strong>
-            </div>
-          </div>
-
-          {/* Exhibition name edit — visible in step 2 for exhibitors */}
-          {mode==='exhibitors' && (
-            <div style={{background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:9,padding:'10px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
-              <span style={{fontSize:11,color:'#92600A',fontWeight:600,flexShrink:0}}>Exhibition:</span>
-              <input
-                list="expo-suggestions-2"
-                value={expo}
-                onChange={e => setExpo(e.target.value)}
-                placeholder="Enter conference name..."
-                style={{flex:1,border:'1px solid #FCD34D',borderRadius:6,padding:'5px 8px',fontSize:11,background:'#fff',fontFamily:'inherit'}}
-              />
-              <datalist id="expo-suggestions-2">
-                {EXPO_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-              </datalist>
-            </div>
-          )}
-
-          {/* Column mapping */}
-          <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,padding:16,marginBottom:14}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#0D1F3C',marginBottom:12}}>Map columns</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-              {fields.map(field => (
-                <div key={field}>
-                  <div style={{fontSize:10,fontWeight:700,color:'#64748B',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>
-                    {field}
-                    {mapping[field] !== undefined && <span style={{color:'#10B981',marginLeft:4}}>✓</span>}
-                  </div>
-                  <select
-                    value={mapping[field]!==undefined ? mapping[field] : ''}
-                    onChange={e => setMapping(m => ({...m,[field]: e.target.value===''?undefined:Number(e.target.value)}))}
-                    style={{width:'100%',border:'1px solid '+(mapping[field]!==undefined?'#86EFAC':'#D0D7E5'),borderRadius:7,padding:'5px 8px',fontSize:11,background:'#fff',fontFamily:'inherit'}}>
-                    <option value=''>not mapped</option>
-                    {headers.map((h,i) => <option key={i} value={i}>{h || `Column ${i+1}`}</option>)}
-                  </select>
+        {/* ── Step 5: Done ── */}
+        {step===5 && result && (
+          <div style={{ background:'#fff', border:`1px solid ${m.border}`, borderRadius:12, padding:48, textAlign:'center' }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>✅</div>
+            <div style={{ fontSize:20, fontWeight:700, color:m.textDark, marginBottom:6 }}>Import complete</div>
+            <div style={{ display:'flex', gap:24, justifyContent:'center', marginBottom:28 }}>
+              {[
+                ['Imported',  result.inserted,                     m.accent],
+                ['Blocked',   result.stagingResult?.blocked||0,    '#DC2626'],
+                ['🔴 Hot',    result.impBreakdown?.hot||0,         '#991B1B'],
+                ['🟡 Warm',   result.impBreakdown?.warm||0,        '#92600A'],
+              ].map(([l,v,c]) => (
+                <div key={l} style={{ textAlign:'center' }}>
+                  <div style={{ fontSize:32, fontWeight:700, color:c }}>{v}</div>
+                  <div style={{ fontSize:11, color:'#94A3B8', textTransform:'uppercase', letterSpacing:1, marginTop:4 }}>{l}</div>
                 </div>
               ))}
             </div>
-          </div>
-
-          {/* Preview */}
-          <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:10,overflow:'hidden',marginBottom:14}}>
-            <div style={{padding:'10px 16px',borderBottom:'1px solid #E4E8F0',fontSize:12,fontWeight:700}}>Preview (first 5 rows)</div>
-            <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-                <thead>
-                  <tr>{fields.filter(f=>mapping[f]!==undefined).map(f=>(
-                    <th key={f} style={{padding:'6px 10px',background:'#F8FAFC',borderBottom:'1px solid #E4E8F0',textAlign:'left',fontSize:9,letterSpacing:'.07em',textTransform:'uppercase',color:'#64748B',fontWeight:600}}>{f}</th>
-                  ))}</tr>
-                </thead>
-                <tbody>{preview.map((row,i)=>(
-                  <tr key={i}>{fields.filter(f=>mapping[f]!==undefined).map(f=>(
-                    <td key={f} style={{padding:'5px 10px',borderBottom:'1px solid #F1F5F9',color:'#475569',whiteSpace:'nowrap',maxWidth:150,overflow:'hidden',textOverflow:'ellipsis'}}>{row[mapping[f]]||'--'}</td>
-                  ))}</tr>
-                ))}</tbody>
-              </table>
+            <div style={{ fontSize:12, color:'#64748B', marginBottom:20 }}>
+              All imported contacts automatically linked to companies table
+            </div>
+            <div style={{ display:'flex', gap:8, justifyContent:'center' }}>
+              <button onClick={reset} style={{ padding:'8px 20px', background:m.accent, color:'#fff', border:'none', borderRadius:8, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+                Import another file
+              </button>
             </div>
           </div>
-
-          <div style={{display:'flex',gap:8}}>
-            <Btn variant="outline" onClick={reset}>Back</Btn>
-            <Btn
-              onClick={doImport}
-              disabled={mapping.company===undefined && mapping['_firstname']===undefined || (mode==='exhibitors' && !expo.trim())}>
-              Import {rawRows.length} {mode==='exhibitors'?'exhibitors':'contacts'}{mode==='exhibitors' && expo.trim() ? ` → ${expo.trim()}` : ' → Contacts DB'}
-            </Btn>
-          </div>
-          {mode==='exhibitors' && !expo.trim() && (
-            <div style={{fontSize:11,color:'#E24B4A',marginTop:8}}>⚠ Please enter an exhibition name before importing</div>
-          )}
-        </div>
-      )}
-
-      {/* ── Step 3: Importing ── */}
-      {step===3 && (
-        <div style={{background:'#fff',border:'1px solid #E4E8F0',borderRadius:12,padding:48,textAlign:'center'}}>
-          <div style={{fontSize:32,marginBottom:14}}>⋯</div>
-          <div style={{fontSize:15,fontWeight:700,color:'#0D1F3C',marginBottom:6}}>Importing {mode==='exhibitors'?'exhibitors':'contacts'}…</div>
-          <div style={{fontSize:13,color:'#64748B',marginBottom:4}}>Processing rows — please wait, do not close this tab</div>
-          <div style={{fontSize:12,color:'#94A3B8'}}>Large files may take up to 60 seconds</div>
-          <div style={{height:6,background:'#F1F5F9',borderRadius:3,marginTop:20,overflow:'hidden'}}>
-            <div style={{height:'100%',background:'#0D1F3C',borderRadius:3,width:'100%',animation:'progress 2s ease-in-out infinite'}}/>
-          </div>
-          <style>{`@keyframes progress { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }`}</style>
-        </div>
-      )}
-
-      {/* ── Step 4: Done ── */}
-      {step===4 && result && (
-        <div style={{background:'#ECFDF5',border:'1px solid #86EFAC',borderRadius:12,padding:32,textAlign:'center'}}>
-          <div style={{fontSize:40,marginBottom:12}}>✓</div>
-          <div style={{fontSize:18,fontWeight:700,color:'#065F46',marginBottom:16}}>Import complete</div>
-          <div style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap',marginBottom:24}}>
-            <div style={{background:'#fff',border:'1px solid #86EFAC',borderRadius:9,padding:'12px 20px',minWidth:120}}>
-              <div style={{fontSize:22,fontWeight:600,color:'#065F46'}}>{result.imported.toLocaleString()}</div>
-              <div style={{fontSize:11,color:'#64748B'}}>{mode==='exhibitors'?'Exhibitors':'Contacts'} imported</div>
-            </div>
-            {result.skipped > 0 && (
-              <div style={{background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:9,padding:'12px 20px',minWidth:120}}>
-                <div style={{fontSize:22,fontWeight:600,color:'#92600A'}}>{result.skipped}</div>
-                <div style={{fontSize:11,color:'#64748B'}}>Skipped (duplicates)</div>
-              </div>
-            )}
-            {result.errors > 0 && (
-              <div style={{background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:9,padding:'12px 20px',minWidth:120}}>
-                <div style={{fontSize:22,fontWeight:600,color:'#E24B4A'}}>{result.errors}</div>
-                <div style={{fontSize:11,color:'#64748B'}}>Errors</div>
-              </div>
-            )}
-          </div>
-          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
-            <Btn variant="outline" onClick={reset}>Import another file</Btn>
-            <Btn onClick={()=>window.location.href=mode==='exhibitors'?'/sales/exhibitors':'/sales/contacts'}>
-              {mode==='exhibitors'?'View Exhibitor Library':'View Contacts'}
-            </Btn>
-          </div>
-        </div>
-      )}
-
-      <Toast toast={toast}/>
+        )}
+      </div>
+      <Toast toast={toast} />
     </div>
   );
 }
