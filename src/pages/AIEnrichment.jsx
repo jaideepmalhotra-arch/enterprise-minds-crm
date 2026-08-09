@@ -113,12 +113,26 @@ function ResultCard({ item, onSave, onDiscard, saving }) {
 }
 
 export default function AIEnrichmentPage() {
-  const [tab,        setTab]        = useState('queue');
+  const [tab,        setTab]        = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('ai_enrichment_results') || '[]');
+      return saved.length > 0 ? 'review' : 'queue';
+    } catch { return 'queue'; }
+  });
   const [companies,  setCompanies]  = useState([]);
   const [enriched,   setEnriched]   = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [selected,   setSelected]   = useState(new Set());
-  const [results,    setResults]    = useState([]);
+  const [results,    setResultsRaw] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ai_enrichment_results') || '[]'); } catch { return []; }
+  });
+  const setResults = (fn) => {
+    setResultsRaw(prev => {
+      const next = typeof fn === 'function' ? fn(prev) : fn;
+      try { localStorage.setItem('ai_enrichment_results', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   const [processing, setProcessing] = useState(false);
   const [processed,  setProcessed]  = useState(0);
   const [total,      setTotal]      = useState(0);
@@ -200,14 +214,24 @@ export default function AIEnrichmentPage() {
       logAudit('lead_enriched', `AI enriched company: ${item.company.name}`,
         { company: item.company.name, tech_stack: item.result.tech_stack, digital_maturity: item.result.digital_maturity });
 
-      setResults(r => r.filter(x => x.company.id !== item.company.id));
+      setResults(r => {
+        const next = r.filter(x => x.company.id !== item.company.id);
+        if (next.length === 0) localStorage.removeItem('ai_enrichment_results');
+        return next;
+      });
       showToast(`${item.company.name} saved ✓`);
       load();
     } catch(e) { showToast('Save failed: ' + e.message, 'error'); }
     finally { setSavingId(null); }
   }
 
-  function discardResult(companyId) { setResults(r => r.filter(x => x.company.id !== companyId)); }
+  function discardResult(companyId) {
+    setResults(r => {
+      const next = r.filter(x => x.company.id !== companyId);
+      if (next.length === 0) localStorage.removeItem('ai_enrichment_results');
+      return next;
+    });
+  }
 
   const TABS = [
     { id: 'queue',  label: `Queue (${companies.length})` },
