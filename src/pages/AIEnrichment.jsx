@@ -10,11 +10,16 @@ const m = {
   badgeBg: '#DBEAFE', badgeText: '#1E40AF',
 };
 
-async function enrichCompany(name, website) {
-  const response = await fetch('/api/enrich', {
+async function enrichCompany(companyId, mode = 'fast') {
+  const { data: { session } } = await supabase.auth.getSession();
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-enrich-company`;
+  const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company: name, website }),
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ company_id: companyId, mode }),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -72,6 +77,8 @@ function ResultCard({ item, onSave, onDiscard, saving }) {
           {result.digital_maturity && <MaturityBadge level={result.digital_maturity} />}
           {result.industry && <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: m.badgeBg, color: m.badgeText }}>{result.industry}</span>}
           {result.headquarters && <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 10, background: '#F1F5F9', color: '#475569' }}>📍 {result.headquarters}</span>}
+          {result.confidence && <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 10, fontWeight:600, background: result.confidence>=80?'#ECFDF5':result.confidence>=60?'#FFFBEB':'#FEF2F2', color: result.confidence>=80?'#065F46':result.confidence>=60?'#92600A':'#991B1B' }}>{result.confidence}% confidence</span>}
+          {result.mode === 'deep' && <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 10, background:'#F5F3FF', color:'#5B21B6', fontWeight:600 }}>🔍 Deep scan</span>}
           {result.size && <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 10, background: '#F1F5F9', color: '#475569' }}>👥 {result.size}</span>}
         </div>
       </div>
@@ -134,6 +141,7 @@ export default function AIEnrichmentPage() {
     });
   };
   const [processing, setProcessing] = useState(false);
+  const [mode,       setMode]       = useState('fast'); // fast | deep
   const [processed,  setProcessed]  = useState(0);
   const [total,      setTotal]      = useState(0);
   const [savingId,   setSavingId]   = useState(null);
@@ -172,7 +180,7 @@ export default function AIEnrichmentPage() {
   function selectAll() { setSelected(new Set(filtered.map(c => c.id))); }
   function clearAll()  { setSelected(new Set()); }
 
-  const costEst = (selected.size * 0.005).toFixed(2);
+  const costEst = (selected.size * (mode === 'deep' ? 0.02 : 0.005)).toFixed(2);
 
   async function runEnrichment() {
     if (selected.size === 0 || processing) return;
@@ -186,13 +194,17 @@ export default function AIEnrichmentPage() {
     for (let i = 0; i < toProcess.length; i++) {
       const company = toProcess[i];
       try {
-        const result = await enrichCompany(company.name, company.website);
-        setResults(r => [...r, { company, result, status: 'ready' }]);
+        const result = await enrichCompany(company.id, mode);
+        if (result.website_valid === false) {
+          setResults(r => [...r, { company, result: null, error: `Invalid website: ${result.reason || 'blocked'}`, status: 'error' }]);
+        } else {
+          setResults(r => [...r, { company, result, status: 'ready' }]);
+        }
       } catch(e) {
         setResults(r => [...r, { company, result: null, error: e.message, status: 'error' }]);
       }
       setProcessed(i + 1);
-      if (i < toProcess.length - 1) await new Promise(r => setTimeout(r, 4000));
+      if (i < toProcess.length - 1) await new Promise(r => setTimeout(r, mode === 'deep' ? 8000 : 3000));
     }
     setProcessing(false);
     showToast(`Enrichment complete — ${toProcess.length} companies processed`);
@@ -281,6 +293,16 @@ export default function AIEnrichmentPage() {
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by company or country..."
                 style={{ flex: 1, minWidth: 200, border: `1px solid ${m.border}`, borderRadius: 8, padding: '6px 12px', fontSize: 12, background: '#fff', fontFamily: 'inherit' }} />
+              {/* Mode toggle */}
+              <div style={{ display:'flex', background:'#DBEAFE', borderRadius:7, padding:2, gap:2 }}>
+                {[['fast','⚡ Fast','~$0.005 · 15s'],['deep','🔍 Deep','~$0.02 · 60s']].map(([id,label,hint]) => (
+                  <button key={id} onClick={() => setMode(id)}
+                    title={hint}
+                    style={{ padding:'4px 12px', borderRadius:6, fontSize:11, fontWeight:600, border:'none', cursor:'pointer', background: mode===id ? m.accent : 'transparent', color: mode===id ? '#fff' : m.textMid, fontFamily:'inherit' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button onClick={selectAll} style={{ padding: '6px 12px', border: `1px solid ${m.border}`, borderRadius: 7, fontSize: 11, cursor: 'pointer', background: m.kpiBg, color: m.textMid, fontFamily: 'inherit' }}>Select all ({filtered.length})</button>
               <button onClick={clearAll}  style={{ padding: '6px 12px', border: '1px solid #D0D7E5', borderRadius: 7, fontSize: 11, cursor: 'pointer', background: '#fff', color: '#64748B', fontFamily: 'inherit' }}>Clear</button>
               {selected.size > 0 && (
@@ -290,7 +312,7 @@ export default function AIEnrichmentPage() {
                   </div>
                   <button onClick={runEnrichment} disabled={processing}
                     style={{ padding: '7px 18px', background: m.accent, color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                    ✦ Enrich {selected.size} with AI
+                    {mode === 'deep' ? '🔍' : '⚡'} {mode === 'deep' ? 'Deep' : 'Fast'} enrich {selected.size} companies
                   </button>
                 </>
               )}
