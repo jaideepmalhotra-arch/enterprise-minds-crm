@@ -86,6 +86,15 @@ Search the web to find current accurate information about their technology stack
       else return new Response(JSON.stringify({ error: 'Could not parse AI response', raw: text }), { status: 500 });
     }
 
+    // Strip <cite> tags from all string values
+    function stripCites(obj) {
+      if (typeof obj === 'string') return obj.replace(/<cite[^>]*>|<\/cite>/g, '').trim();
+      if (Array.isArray(obj)) return obj.map(stripCites);
+      if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).map(([k,v]) => [k, stripCites(v)]));
+      return obj;
+    }
+    parsed = stripCites(parsed);
+
     return new Response(JSON.stringify(parsed), {
       headers: {
         'Content-Type': 'application/json',
