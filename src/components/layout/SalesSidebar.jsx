@@ -9,6 +9,7 @@ const MODULES = [
     activeBorder:'#60A5FA',
     items:[
       { to:'/sales/import',       label:'Import',           icon:'⬆' },
+      { to:'/sales/companies',    label:'Companies',        icon:'🏢' },
       { to:'/sales/add-contact',  label:'Add Contact',      icon:'＋' },
       { to:'/sales/conferences',  label:'Conferences',      icon:'⬡', countKey:'exhibitors' },
       { to:'/sales/ai-enrichment', label:'AI Enrichment',     icon:'✦' },
