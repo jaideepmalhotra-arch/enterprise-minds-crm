@@ -9,157 +9,205 @@ const m = {
   badgeBg: '#DBEAFE', badgeText: '#1E40AF',
 };
 
-// ── Colour scale by company count ─────────────────────────────────────────────
-function countryColor(count, max) {
-  if (!count) return '#EDF2FF';
-  const t = Math.min(count / Math.max(max * 0.7, 1), 1);
-  const blues = ['#DBEAFE','#BFDBFE','#93C5FD','#60A5FA','#3B82F6','#2563EB','#1D4ED8','#1E40AF'];
-  return blues[Math.min(Math.floor(t * blues.length), blues.length - 1)];
+const BLUE_RAMP = ['#EFF6FF','#DBEAFE','#BFDBFE','#93C5FD','#60A5FA','#3B82F6','#2563EB','#1D4ED8'];
+
+function countryFill(count, max) {
+  if (!count) return '#EFF6FF';
+  const t = Math.min(count / Math.max(max * 0.6, 1), 1);
+  return BLUE_RAMP[Math.min(Math.floor(t * BLUE_RAMP.length), BLUE_RAMP.length - 1)];
 }
 
-// ── D3 Choropleth Map ─────────────────────────────────────────────────────────
-function ChoroplethMap({ countryData, selectedCountry, onCountryClick }) {
-  const svgRef  = useRef(null);
-  const [geoJson, setGeoJson] = useState(null);
+// ── D3 Natural Earth choropleth ───────────────────────────────────────────────
+function WorldMap({ countryData, selectedCountry, onCountryClick }) {
+  const svgRef    = useRef(null);
+  const wrapRef   = useRef(null);
+  const [geo,     setGeo]     = useState(null);
   const [hovered, setHovered] = useState(null);
-  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, name: '', count: 0 });
+  const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, name: '', count: 0 });
+  const [dims,    setDims]    = useState({ w: 900, h: 420 });
 
+  // Load topojson + d3
   useEffect(() => {
-    fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
-      .then(r => r.json())
-      .then(d => setGeoJson(d))
-      .catch(() => {});
+    Promise.all([
+      import('https://esm.sh/d3-geo@3'),
+      import('https://esm.sh/topojson-client@3'),
+      fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json()),
+    ]).then(([d3geo, topojson, world]) => {
+      const countries = topojson.feature(world, world.objects.countries);
+      // Attach name from a name lookup
+      fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+        .then(() => {
+          setGeo({ features: countries.features, d3geo, topojson, world });
+        });
+    }).catch(console.error);
+  }, []);
+
+  // Responsive width
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0].contentRect.width;
+      setDims({ w: Math.max(w, 400), h: Math.round(Math.max(w, 400) * 0.46) });
+    });
+    ro.observe(wrapRef.current);
+    return () => ro.disconnect();
   }, []);
 
   const maxCount = useMemo(() => Math.max(...Object.values(countryData), 1), [countryData]);
 
-  const project = useCallback((lon, lat, w, h) => {
-    const x = (lon + 180) * (w / 360);
-    const latRad = lat * Math.PI / 180;
-    const mercN  = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-    const y      = h / 2 - (mercN * h / (2 * Math.PI));
-    return [x, y];
-  }, []);
+  const ISO_NAME = useMemo(() => ({
+    4:'Afghanistan',8:'Albania',12:'Algeria',24:'Angola',32:'Argentina',36:'Australia',
+    40:'Austria',50:'Bangladesh',56:'Belgium',64:'Bhutan',68:'Bolivia',76:'Brazil',
+    100:'Bulgaria',116:'Cambodia',120:'Cameroon',124:'Canada',144:'Sri Lanka',
+    152:'Chile',156:'China',170:'Colombia',191:'Croatia',192:'Cuba',196:'Cyprus',
+    203:'Czechia',208:'Denmark',818:'Egypt',231:'Ethiopia',246:'Finland',
+    250:'France',276:'Germany',288:'Ghana',300:'Greece',356:'India',360:'Indonesia',
+    364:'Iran',368:'Iraq',372:'Ireland',376:'Israel',380:'Italy',388:'Jamaica',
+    392:'Japan',400:'Jordan',398:'Kazakhstan',404:'Kenya',410:'South Korea',
+    414:'Kuwait',418:'Laos',422:'Lebanon',434:'Libya',504:'Morocco',
+    484:'Mexico',496:'Mongolia',528:'Netherlands',554:'New Zealand',566:'Nigeria',
+    578:'Norway',512:'Oman',586:'Pakistan',275:'Palestine',591:'Panama',
+    604:'Peru',608:'Philippines',616:'Poland',620:'Portugal',634:'Qatar',
+    642:'Romania',643:'Russia',682:'Saudi Arabia',686:'Senegal',703:'Slovakia',
+    706:'Somalia',710:'South Africa',724:'Spain',729:'Sudan',752:'Sweden',
+    756:'Switzerland',760:'Syria',762:'Tajikistan',764:'Thailand',788:'Tunisia',
+    792:'Turkey',800:'Uganda',804:'Ukraine',784:'UAE',826:'United Kingdom',
+    840:'United States',858:'Uruguay',860:'Uzbekistan',704:'Vietnam',887:'Yemen',
+    894:'Zambia',716:'Zimbabwe',
+  }), []);
 
-  const pathFromGeometry = useCallback((geometry, w, h) => {
-    const ring2path = (ring) => {
-      let d = '';
-      ring.forEach((coord, i) => {
-        const [x, y] = project(coord[0], coord[1], w, h);
-        d += (i === 0 ? 'M' : 'L') + `${x.toFixed(1)},${y.toFixed(1)}`;
-      });
-      return d + 'Z';
-    };
-    if (geometry.type === 'Polygon') {
-      return geometry.coordinates.map(ring2path).join(' ');
-    } else if (geometry.type === 'MultiPolygon') {
-      return geometry.coordinates.flatMap(poly => poly.map(ring2path)).join(' ');
-    }
-    return '';
-  }, [project]);
-
-  const W = 900, H = 460;
-
-  // Country name normalisation — GeoJSON uses full names
-  const NAME_MAP = {
-    'United States of America': 'United States',
-    'United Kingdom': 'United Kingdom',
-    'UAE': 'United Arab Emirates',
+  const NAME_ALIAS = {
     'United Arab Emirates': 'UAE',
+    'United States of America': 'United States',
+    'United Kingdom of Great Britain and Northern Ireland': 'United Kingdom',
+    'Viet Nam': 'Vietnam',
+    'Republic of Korea': 'South Korea',
+    'Democratic Republic of the Congo': 'DR Congo',
+    'Czech Republic': 'Czechia',
+    'Russian Federation': 'Russia',
+    'Syrian Arab Republic': 'Syria',
+    'Islamic Republic of Iran': 'Iran',
   };
 
-  function resolveCount(geoName) {
-    return countryData[geoName] || countryData[NAME_MAP[geoName]] || 0;
-  }
-  function resolveSelected(geoName) {
-    return selectedCountry === geoName || selectedCountry === NAME_MAP[geoName];
-  }
-
-  if (!geoJson) return (
-    <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', fontSize: 12 }}>
-      Loading map…
+  if (!geo) return (
+    <div style={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', borderRadius: 10 }}>
+      <span style={{ color: '#94A3B8', fontSize: 13 }}>Loading map…</span>
     </div>
   );
 
+  const { features, d3geo } = geo;
+  const W = dims.w, H = dims.h;
+
+  // Natural Earth projection
+  const proj = d3geo.geoNaturalEarth1()
+    .scale(W / 6.3)
+    .translate([W / 2, H / 2]);
+  const pathGen = d3geo.geoPath().projection(proj);
+
+  function getName(feature) {
+    const num = parseInt(feature.id);
+    const isoName = ISO_NAME[num] || feature.properties?.name || '';
+    return NAME_ALIAS[isoName] || isoName;
+  }
+
+  function getCount(feature) {
+    const name = getName(feature);
+    return countryData[name] || 0;
+  }
+
+  function isSelected(feature) {
+    return getName(feature) === selectedCountry;
+  }
+
   return (
-    <div style={{ position: 'relative', background: '#EFF6FF', borderRadius: 10, overflow: 'hidden', border: `1px solid ${m.border}` }}>
+    <div ref={wrapRef} style={{ position: 'relative', background: '#EFF6FF', borderRadius: 10, overflow: 'hidden', border: `1px solid ${m.border}` }}>
       <svg ref={svgRef} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
-        {/* Ocean */}
         <rect width={W} height={H} fill="#EFF6FF" />
-        {geoJson.features.map((feature, i) => {
-          const name  = feature.properties?.ADMIN || feature.properties?.name || '';
-          const count = resolveCount(name);
-          const isSel = resolveSelected(name);
-          const isHov = hovered === name;
-          const fill  = isSel ? '#F59E0B' : isHov && count > 0 ? '#60A5FA' : countryColor(count, maxCount);
-          const stroke = isSel ? '#D97706' : '#fff';
-          const sw     = isSel ? 1.5 : 0.4;
-          const d = pathFromGeometry(feature.geometry, W, H);
+        {/* Graticule */}
+        <path d={pathGen(d3geo.geoGraticule()()} fill="none" stroke="#DBEAFE" strokeWidth={0.3} />
+        {features.map((f, i) => {
+          const count = getCount(f);
+          const sel   = isSelected(f);
+          const hov   = hovered === i;
+          const fill  = sel ? '#F59E0B' : (hov && count > 0) ? '#60A5FA' : countryFill(count, maxCount);
+          const d     = pathGen(f);
           if (!d) return null;
           return (
-            <path key={i} d={d} fill={fill} stroke={stroke} strokeWidth={sw}
-              style={{ cursor: count > 0 ? 'pointer' : 'default', transition: 'fill .15s' }}
+            <path key={i} d={d}
+              fill={fill}
+              stroke={sel ? '#D97706' : '#fff'}
+              strokeWidth={sel ? 1.2 : 0.35}
+              style={{ cursor: count > 0 ? 'pointer' : 'default', transition: 'fill .12s' }}
               onMouseEnter={e => {
-                setHovered(name);
+                if (!count) return;
+                setHovered(i);
                 const rect = svgRef.current?.getBoundingClientRect();
-                setTooltip({ visible: true, x: e.clientX - (rect?.left||0), y: e.clientY - (rect?.top||0), name, count });
+                setTooltip({ show: true, x: e.clientX - (rect?.left||0), y: e.clientY - (rect?.top||0), name: getName(f), count });
               }}
-              onMouseLeave={() => { setHovered(null); setTooltip(t => ({ ...t, visible: false })); }}
-              onClick={() => count > 0 && onCountryClick(name)}
+              onMouseLeave={() => { setHovered(null); setTooltip(t => ({ ...t, show: false })); }}
+              onClick={() => { if (count > 0) onCountryClick(getName(f)); }}
             />
           );
         })}
       </svg>
+
       {/* Tooltip */}
-      {tooltip.visible && tooltip.count > 0 && (
-        <div style={{ position: 'absolute', left: tooltip.x + 12, top: tooltip.y - 10, background: '#0F172A', color: '#fff', borderRadius: 7, padding: '6px 10px', fontSize: 11, pointerEvents: 'none', zIndex: 10, whiteSpace: 'nowrap', boxShadow: '0 4px 12px rgba(0,0,0,.25)' }}>
+      {tooltip.show && (
+        <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 8, background: '#0F172A', color: '#fff', borderRadius: 7, padding: '5px 10px', fontSize: 11, pointerEvents: 'none', zIndex: 20, whiteSpace: 'nowrap' }}>
           <div style={{ fontWeight: 700 }}>{tooltip.name}</div>
-          <div style={{ color: '#93C5FD' }}>{tooltip.count} companies</div>
+          <div style={{ color: '#93C5FD', fontSize: 10 }}>{tooltip.count.toLocaleString()} companies</div>
         </div>
       )}
+
       {/* Legend */}
-      <div style={{ position: 'absolute', bottom: 10, left: 12, display: 'flex', gap: 4, alignItems: 'center' }}>
+      <div style={{ position: 'absolute', bottom: 8, left: 10, display: 'flex', alignItems: 'center', gap: 3 }}>
         {['#DBEAFE','#93C5FD','#3B82F6','#1D4ED8'].map((c, i) => (
-          <div key={i} style={{ width: 14, height: 14, background: c, borderRadius: 2 }} />
+          <div key={i} style={{ width: 14, height: 8, background: c, borderRadius: 2 }} />
         ))}
-        <span style={{ fontSize: 9, color: '#475569', marginLeft: 4 }}>Low → High</span>
+        <span style={{ fontSize: 9, color: '#64748B', marginLeft: 4 }}>Low → High density</span>
       </div>
+
+      {/* Selected badge */}
+      {selectedCountry && (
+        <div style={{ position: 'absolute', top: 10, left: 10, background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 7, padding: '4px 10px', fontSize: 11, fontWeight: 600, color: '#92600A', display: 'flex', alignItems: 'center', gap: 6 }}>
+          📍 {selectedCountry}
+          <button onClick={() => onCountryClick(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#92600A', lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CompanyMapPage() {
-  const [companies,      setCompanies]      = useState([]);
-  const [loading,        setLoading]        = useState(true);
-  const [selectedCountry,setSelectedCountry]= useState(null);
-  const [techFilter,     setTechFilter]     = useState('');
-  const [industryFilter, setIndustryFilter] = useState('');
-  const [search,         setSearch]         = useState('');
-  const [toast,          setToast]          = useState(null);
-  const [drillCompany,   setDrillCompany]   = useState(null);
-  const [contacts,       setContacts]       = useState([]);
-  const [contactLoading, setContactLoading] = useState(false);
+  const [companies,       setCompanies]       = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [techFilter,      setTechFilter]      = useState('');
+  const [industryFilter,  setIndustryFilter]  = useState('');
+  const [search,          setSearch]          = useState('');
+  const [toast,           setToast]           = useState(null);
+  const [drillCompany,    setDrillCompany]    = useState(null);
+  const [contacts,        setContacts]        = useState([]);
+  const [contactLoading,  setContactLoading]  = useState(false);
 
-  const showToast = (msg, type='success') => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
-  // Load all companies with ai_enrichment
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
         const all = [];
         let from = 0;
-        const PAGE = 1000;
         while (true) {
           const { data, error } = await supabase.from('companies')
             .select('id, name, website, country, industry, size, ai_enrichment, ai_enriched_at')
-            .range(from, from + PAGE - 1);
+            .range(from, from + 999);
           if (error) throw error;
-          if (!data || data.length === 0) break;
+          if (!data?.length) break;
           all.push(...data);
-          if (data.length < PAGE) break;
-          from += PAGE;
+          if (data.length < 1000) break;
+          from += 1000;
         }
         setCompanies(all);
       } catch(e) { console.error(e); }
@@ -168,68 +216,48 @@ export default function CompanyMapPage() {
     load();
   }, []);
 
-  // Extract all unique tech stack items from enriched companies
   const allTechs = useMemo(() => {
-    const m = new Map();
-    companies.forEach(c => {
-      const techs = c.ai_enrichment?.tech_stack || [];
-      techs.forEach(t => { if (t) m.set(t, (m.get(t) || 0) + 1); });
-    });
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80);
+    const m2 = new Map();
+    companies.forEach(c => (c.ai_enrichment?.tech_stack || []).forEach(t => { if (t) m2.set(t, (m2.get(t) || 0) + 1); }));
+    return [...m2.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80);
   }, [companies]);
 
   const allIndustries = useMemo(() => {
-    const m = new Map();
+    const m2 = new Map();
     companies.forEach(c => {
       const ind = c.ai_enrichment?.industry || c.industry;
-      if (ind) m.set(ind, (m.get(ind) || 0) + 1);
+      if (ind) m2.set(ind, (m2.get(ind) || 0) + 1);
     });
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+    return [...m2.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
   }, [companies]);
 
-  // Filter companies
   const filtered = useMemo(() => {
     let r = companies;
-    if (search) {
-      const q = search.toLowerCase();
-      r = r.filter(c => (c.name||'').toLowerCase().includes(q) || (c.country||'').toLowerCase().includes(q));
-    }
-    if (techFilter) {
-      r = r.filter(c => (c.ai_enrichment?.tech_stack || []).includes(techFilter));
-    }
-    if (industryFilter) {
-      r = r.filter(c => {
-        const ind = c.ai_enrichment?.industry || c.industry || '';
-        return ind === industryFilter;
-      });
-    }
-    if (selectedCountry) {
-      r = r.filter(c => c.country === selectedCountry || c.ai_enrichment?.country === selectedCountry);
-    }
+    if (search) { const q = search.toLowerCase(); r = r.filter(c => (c.name||'').toLowerCase().includes(q) || (c.country||'').toLowerCase().includes(q)); }
+    if (techFilter) r = r.filter(c => (c.ai_enrichment?.tech_stack || []).includes(techFilter));
+    if (industryFilter) r = r.filter(c => (c.ai_enrichment?.industry || c.industry || '') === industryFilter);
+    if (selectedCountry) r = r.filter(c => (c.country || c.ai_enrichment?.country) === selectedCountry);
     return r;
   }, [companies, search, techFilter, industryFilter, selectedCountry]);
 
-  // Country rollup for map
   const countryData = useMemo(() => {
-    const m = {};
+    const m2 = {};
     companies.forEach(c => {
-      const country = c.country || c.ai_enrichment?.country;
-      if (country) m[country] = (m[country] || 0) + 1;
+      const co = c.country || c.ai_enrichment?.country;
+      if (co) m2[co] = (m2[co] || 0) + 1;
     });
-    return m;
+    return m2;
   }, [companies]);
 
-  // Country list for sidebar (sorted by count)
   const countryList = useMemo(() => {
-    const m = {};
-    filtered.forEach(c => {
-      const country = c.country || c.ai_enrichment?.country || 'Unknown';
-      m[country] = (m[country] || 0) + 1;
-    });
-    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+    const m2 = {};
+    filtered.forEach(c => { const co = c.country || c.ai_enrichment?.country || 'Unknown'; m2[co] = (m2[co] || 0) + 1; });
+    return Object.entries(m2).sort((a, b) => b[1] - a[1]);
   }, [filtered]);
 
-  // Load contacts for drilled company
+  const knownCountryList = useMemo(() => countryList.filter(([k]) => k !== 'Unknown'), [countryList]);
+  const unknownCount = useMemo(() => (countryData['Unknown'] || 0) + companies.filter(c => !c.country && !c.ai_enrichment?.country).length, [countryData, companies]);
+
   async function drillIntoCompany(company) {
     setDrillCompany(company);
     setContactLoading(true);
@@ -237,31 +265,29 @@ export default function CompanyMapPage() {
       .select('id, contact, role, email, phone, linkedin, importance')
       .eq('company_id', company.id)
       .not('contact', 'is', null).neq('contact', '')
-      .order('contact').limit(50);
+      .order('contact').limit(30);
     setContacts(data || []);
     setContactLoading(false);
   }
 
-  const IMP_CONFIG = {
-    hot:          { label: '🔴', bg: '#FEF2F2', color: '#991B1B' },
-    warm:         { label: '🟡', bg: '#FFFBEB', color: '#92600A' },
-    cold:         { label: '🔵', bg: '#EFF6FF', color: '#1E40AF' },
-    not_relevant: { label: '⬜', bg: '#F1F5F9', color: '#475569' },
-  };
+  function handleCountryClick(name) {
+    if (!name || name === selectedCountry) { setSelectedCountry(null); setDrillCompany(null); }
+    else { setSelectedCountry(name); setDrillCompany(null); }
+  }
 
-  const enrichedCount  = filtered.filter(c => c.ai_enriched_at).length;
-  const withTechCount  = filtered.filter(c => (c.ai_enrichment?.tech_stack||[]).length > 0).length;
+  const IMP = { hot: '🔴', warm: '🟡', cold: '🔵', not_relevant: '⬜' };
+  const enrichedCount = filtered.filter(c => c.ai_enriched_at).length;
 
   return (
     <div style={{ background: m.pageBg, minHeight: '100vh' }}>
-      {/* Module header */}
+      {/* Header */}
       <div style={{ background: m.headerBg, borderBottom: `1px solid ${m.border}`, padding: '14px 20px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: m.badgeBg, color: m.badgeText }}>📤 Output</span>
+          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#DCFCE7', color: '#166534' }}>📤 Output</span>
           <span style={{ color: m.border }}>/</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: m.textDark }}>Company Map</span>
         </div>
-        <div style={{ fontSize: 11, color: m.textMid }}>Country-level company distribution · filter by technology stack and industry</div>
+        <div style={{ fontSize: 11, color: m.textMid }}>Country distribution · tech stack & industry filters · company drill-down</div>
       </div>
 
       <div style={{ padding: '16px 20px' }}>
@@ -270,186 +296,145 @@ export default function CompanyMapPage() {
           {[
             ['Total companies', companies.length, m.textDark],
             ['Filtered',        filtered.length,  m.accent],
-            ['Countries',       countryList.length, '#059669'],
+            ['Countries mapped', knownCountryList.length, '#059669'],
             ['AI enriched',     enrichedCount,    '#7C3AED'],
-            ['With tech data',  withTechCount,    '#F59E0B'],
-          ].map(([l,v,c]) => (
-            <div key={l} style={{ background: m.kpiBg, border: `1px solid ${m.kpiBorder}`, borderRadius: 9, padding: '10px 14px', flex: 1, minWidth: 100 }}>
+            ['No country',      unknownCount,     '#94A3B8'],
+          ].map(([l, v, c]) => (
+            <div key={l} style={{ background: m.kpiBg, border: `1px solid ${m.kpiBorder}`, borderRadius: 9, padding: '8px 14px', flex: 1, minWidth: 100 }}>
               <div style={{ fontSize: 10, color: m.textMid, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>{l}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c }}>{v.toLocaleString()}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c }}>{typeof v === 'number' ? v.toLocaleString() : v}</div>
             </div>
           ))}
         </div>
 
         {/* Filters */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search company or country..."
-            style={{ flex: 1, minWidth: 200, border: `1px solid ${m.border}`, borderRadius: 8, padding: '6px 12px', fontSize: 12, background: '#fff', fontFamily: 'inherit' }} />
-
-          {/* Tech filter */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search company or country…"
+            style={{ flex: 1, minWidth: 180, border: `1px solid ${m.border}`, borderRadius: 8, padding: '6px 12px', fontSize: 12, background: '#fff', fontFamily: 'inherit' }} />
           <select value={techFilter} onChange={e => setTechFilter(e.target.value)}
-            style={{ border: `1px solid ${techFilter ? '#7C3AED' : m.border}`, borderRadius: 7, padding: '5px 9px', fontSize: 11, background: techFilter ? '#F5F3FF' : '#fff', color: techFilter ? '#3C3489' : '#64748B', fontFamily: 'inherit', minWidth: 160 }}>
+            style={{ border: `1px solid ${techFilter ? '#7C3AED' : m.border}`, borderRadius: 7, padding: '5px 9px', fontSize: 11, background: techFilter ? '#F5F3FF' : '#fff', color: techFilter ? '#3C3489' : '#64748B', fontFamily: 'inherit', minWidth: 155 }}>
             <option value="">All technologies</option>
-            {allTechs.map(([t, count]) => <option key={t} value={t}>{t} ({count})</option>)}
+            {allTechs.map(([t, n]) => <option key={t} value={t}>{t} ({n})</option>)}
           </select>
-
-          {/* Industry filter */}
           <select value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}
-            style={{ border: `1px solid ${industryFilter ? '#059669' : m.border}`, borderRadius: 7, padding: '5px 9px', fontSize: 11, background: industryFilter ? '#ECFDF5' : '#fff', color: industryFilter ? '#065F46' : '#64748B', fontFamily: 'inherit', minWidth: 160 }}>
+            style={{ border: `1px solid ${industryFilter ? '#059669' : m.border}`, borderRadius: 7, padding: '5px 9px', fontSize: 11, background: industryFilter ? '#ECFDF5' : '#fff', color: industryFilter ? '#065F46' : '#64748B', fontFamily: 'inherit', minWidth: 155 }}>
             <option value="">All industries</option>
-            {allIndustries.map(([ind, count]) => <option key={ind} value={ind}>{ind} ({count})</option>)}
+            {allIndustries.map(([ind, n]) => <option key={ind} value={ind}>{ind} ({n})</option>)}
           </select>
-
-          {/* Active filters */}
-          {(selectedCountry || techFilter || industryFilter) && (
-            <button onClick={() => { setSelectedCountry(null); setTechFilter(''); setIndustryFilter(''); setSearch(''); }}
+          {(selectedCountry || techFilter || industryFilter || search) && (
+            <button onClick={() => { setSelectedCountry(null); setTechFilter(''); setIndustryFilter(''); setSearch(''); setDrillCompany(null); }}
               style={{ padding: '5px 12px', border: `1px solid ${m.border}`, borderRadius: 7, fontSize: 11, cursor: 'pointer', background: '#fff', color: '#64748B', fontFamily: 'inherit' }}>
-              Clear filters
+              Clear all ×
             </button>
           )}
-
-          <span style={{ fontSize: 12, color: '#94A3B8', marginLeft: 'auto' }}>{filtered.length} companies shown</span>
         </div>
 
-        {/* Active filter chips */}
+        {/* Active chips */}
         {(selectedCountry || techFilter || industryFilter) && (
           <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-            {selectedCountry && (
-              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#FFFBEB', color: '#92600A', border: '1px solid #FCD34D', display: 'flex', alignItems: 'center', gap: 5 }}>
-                📍 {selectedCountry}
-                <button onClick={() => setSelectedCountry(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#92600A', padding: 0, lineHeight: 1 }}>×</button>
-              </span>
-            )}
-            {techFilter && (
-              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#F5F3FF', color: '#3C3489', border: '1px solid #C4B5FD', display: 'flex', alignItems: 'center', gap: 5 }}>
-                ⚡ {techFilter}
-                <button onClick={() => setTechFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#3C3489', padding: 0, lineHeight: 1 }}>×</button>
-              </span>
-            )}
-            {industryFilter && (
-              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#ECFDF5', color: '#065F46', border: '1px solid #86EFAC', display: 'flex', alignItems: 'center', gap: 5 }}>
-                🏭 {industryFilter}
-                <button onClick={() => setIndustryFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#065F46', padding: 0, lineHeight: 1 }}>×</button>
-              </span>
-            )}
+            {selectedCountry && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#FFFBEB', color: '#92600A', border: '1px solid #FCD34D' }}>📍 {selectedCountry} <button onClick={() => { setSelectedCountry(null); setDrillCompany(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92600A', fontSize: 13, marginLeft: 2 }}>×</button></span>}
+            {techFilter && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#F5F3FF', color: '#3C3489', border: '1px solid #C4B5FD' }}>⚡ {techFilter} <button onClick={() => setTechFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3C3489', fontSize: 13, marginLeft: 2 }}>×</button></span>}
+            {industryFilter && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#ECFDF5', color: '#065F46', border: '1px solid #86EFAC' }}>🏭 {industryFilter} <button onClick={() => setIndustryFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#065F46', fontSize: 13, marginLeft: 2 }}>×</button></span>}
           </div>
         )}
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#94A3B8' }}>
-            <div style={{ fontSize: 24, marginBottom: 8 }}>⋯</div>
-            <div style={{ fontSize: 13 }}>Loading companies…</div>
+            <div style={{ fontSize: 20, marginBottom: 8 }}>⋯</div>
+            <div>Loading companies…</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
-
-            {/* Left — Map + Country list */}
-            <div>
-              {/* Choropleth map */}
-              <ChoroplethMap
-                countryData={countryData}
-                selectedCountry={selectedCountry}
-                onCountryClick={c => setSelectedCountry(c === selectedCountry ? null : c)}
-              />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 310px', gap: 16 }}>
+            {/* Left — map + country list */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <WorldMap countryData={countryData} selectedCountry={selectedCountry} onCountryClick={handleCountryClick} />
 
               {/* Country list */}
-              <div style={{ background: '#fff', border: `1px solid ${m.border}`, borderRadius: 10, overflow: 'hidden', marginTop: 14 }}>
-                <div style={{ padding: '10px 16px', background: m.kpiBg, borderBottom: `1px solid ${m.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ background: '#fff', border: `1px solid ${m.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ padding: '10px 14px', background: m.kpiBg, borderBottom: `1px solid ${m.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: m.textDark }}>
-                    {selectedCountry ? `Companies in ${selectedCountry}` : 'All countries'} · {filtered.length} companies
+                    {selectedCountry ? `${selectedCountry} · ${filtered.length} companies` : `All countries · ${knownCountryList.length} mapped`}
                   </div>
-                  {selectedCountry && (
-                    <button onClick={() => setSelectedCountry(null)}
-                      style={{ fontSize: 11, color: m.accent, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-                      Show all ×
-                    </button>
-                  )}
+                  {selectedCountry && <button onClick={() => { setSelectedCountry(null); setDrillCompany(null); }} style={{ fontSize: 11, color: m.accent, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Show all ×</button>}
                 </div>
 
                 {selectedCountry ? (
-                  // Company list for selected country
-                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 340, overflowY: 'auto' }}>
                     {filtered.length === 0 ? (
                       <div style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>No companies match current filters</div>
-                    ) : filtered.map((co, i) => {
+                    ) : filtered.map(co => {
                       const e = co.ai_enrichment || {};
                       return (
                         <div key={co.id} onClick={() => drillIntoCompany(co)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: drillCompany?.id === co.id ? m.kpiBg : 'transparent' }}
-                          onMouseEnter={e2 => { if (drillCompany?.id !== co.id) e2.currentTarget.style.background = '#F8FAFC'; }}
-                          onMouseLeave={e2 => { e2.currentTarget.style.background = drillCompany?.id === co.id ? m.kpiBg : 'transparent'; }}>
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: drillCompany?.id === co.id ? m.kpiBg : 'transparent' }}
+                          onMouseEnter={ev => { if (drillCompany?.id !== co.id) ev.currentTarget.style.background = '#F8FAFC'; }}
+                          onMouseLeave={ev => { ev.currentTarget.style.background = drillCompany?.id === co.id ? m.kpiBg : 'transparent'; }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 600, color: m.textDark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{co.name}</div>
-                            <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>
-                              {e.industry || co.industry || '—'}
-                              {e.size && ` · ${e.size}`}
-                            </div>
-                            {(e.tech_stack||[]).slice(0,3).length > 0 && (
+                            <div style={{ fontSize: 10, color: '#64748B', marginTop: 1 }}>{e.industry || co.industry || '—'}{e.size ? ` · ${e.size}` : ''}</div>
+                            {(e.tech_stack || []).slice(0, 3).length > 0 && (
                               <div style={{ marginTop: 3 }}>
-                                {(e.tech_stack||[]).slice(0,3).map((t,j) => (
-                                  <span key={j} style={{ padding: '1px 6px', borderRadius: 20, fontSize: 9, fontWeight: 600, background: m.badgeBg, color: m.badgeText, marginRight: 3 }}>{t}</span>
-                                ))}
-                                {(e.tech_stack||[]).length > 3 && <span style={{ fontSize: 9, color: '#94A3B8' }}>+{e.tech_stack.length-3}</span>}
+                                {e.tech_stack.slice(0, 3).map((t, j) => <span key={j} style={{ padding: '1px 5px', borderRadius: 20, fontSize: 9, fontWeight: 600, background: m.badgeBg, color: m.badgeText, marginRight: 3 }}>{t}</span>)}
+                                {e.tech_stack.length > 3 && <span style={{ fontSize: 9, color: '#94A3B8' }}>+{e.tech_stack.length - 3}</span>}
                               </div>
                             )}
                           </div>
-                          {co.ai_enriched_at && <span style={{ fontSize: 9, color: '#059669', fontWeight: 600, flexShrink: 0 }}>✦</span>}
+                          {co.ai_enriched_at && <span style={{ fontSize: 9, color: '#059669', fontWeight: 700, flexShrink: 0 }}>✦</span>}
                           <span style={{ fontSize: 10, color: m.accent, flexShrink: 0 }}>→</span>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  // Country rollup table
-                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-                    {countryList.map(([country, count]) => {
-                      const pct = Math.round(count / Math.max(filtered.length, 1) * 100);
-                      const maxC = Math.max(...countryList.map(([,c])=>c), 1);
+                  <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+                    {knownCountryList.map(([country, count]) => {
+                      const maxC = Math.max(...knownCountryList.map(([, c]) => c), 1);
+                      const pct  = Math.round(count / Math.max(companies.length, 1) * 100);
                       return (
-                        <div key={country} onClick={() => setSelectedCountry(country)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }}
+                        <div key={country} onClick={() => handleCountryClick(country)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }}
                           onMouseEnter={e => e.currentTarget.style.background = m.kpiBg}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                          <div style={{ fontSize: 12, fontWeight: 500, color: m.textDark, minWidth: 140 }}>{country}</div>
-                          <div style={{ flex: 1, height: 6, background: '#E4E8F0', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', background: m.accent, borderRadius: 3, width: `${count/maxC*100}%`, opacity: 0.7 }} />
+                          <span style={{ fontSize: 12, color: m.textDark, minWidth: 130, fontWeight: 500 }}>{country}</span>
+                          <div style={{ flex: 1, height: 5, background: '#E4E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', background: m.accent, opacity: 0.7, borderRadius: 3, width: `${count / maxC * 100}%` }} />
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: m.textDark, minWidth: 30, textAlign: 'right' }}>{count}</div>
-                          <div style={{ fontSize: 10, color: '#94A3B8', minWidth: 32 }}>{pct}%</div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: m.textDark, minWidth: 28, textAlign: 'right' }}>{count}</span>
+                          <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 30 }}>{pct}%</span>
                         </div>
                       );
                     })}
-                    {countryList.length === 0 && (
-                      <div style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>No country data — enrich companies first</div>
+                    {unknownCount > 0 && (
+                      <div style={{ padding: '8px 14px', fontSize: 11, color: '#94A3B8', borderTop: '1px solid #F1F5F9' }}>
+                        ⚠ {unknownCount.toLocaleString()} companies have no country — enrich via AI Enrichment
+                      </div>
                     )}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Right — Company drill-down drawer */}
+            {/* Right — company drill panel */}
             <div>
               <div style={{ background: '#fff', border: `1px solid ${m.border}`, borderRadius: 10, overflow: 'hidden', position: 'sticky', top: 16 }}>
                 {!drillCompany ? (
-                  <div style={{ padding: 32, textAlign: 'center', color: '#94A3B8' }}>
-                    <div style={{ fontSize: 24, marginBottom: 8 }}>🏢</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Click a country then a company</div>
-                    <div style={{ fontSize: 11, marginTop: 4 }}>View contacts and tech profile</div>
+                  <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94A3B8' }}>
+                    <div style={{ fontSize: 26, marginBottom: 8 }}>🏢</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Click a country</div>
+                    <div style={{ fontSize: 11, marginTop: 4 }}>then select a company to view its profile</div>
                   </div>
                 ) : (
                   <>
-                    <div style={{ background: m.headerBg, padding: '12px 16px', borderBottom: `1px solid ${m.border}` }}>
+                    <div style={{ background: m.headerBg, padding: '12px 14px', borderBottom: `1px solid ${m.border}` }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: m.textDark, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{drillCompany.name}</div>
-                          {drillCompany.website && (
-                            <a href={`https://${drillCompany.website.replace(/^https?:\/\//,'')}`} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: m.accent }}>{drillCompany.website}</a>
-                          )}
+                          <div style={{ fontSize: 14, fontWeight: 700, color: m.textDark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{drillCompany.name}</div>
+                          {drillCompany.website && <a href={`https://${drillCompany.website.replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: m.accent }}>{drillCompany.website}</a>}
                         </div>
-                        <button onClick={() => setDrillCompany(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#64748B', padding: 2 }}>✕</button>
+                        <button onClick={() => setDrillCompany(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#64748B', padding: 2, flexShrink: 0 }}>✕</button>
                       </div>
                       <div style={{ display: 'flex', gap: 5, marginTop: 8, flexWrap: 'wrap' }}>
-                        {drillCompany.country && <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10, background: '#F1F5F9', color: '#475569' }}>📍 {drillCompany.country}</span>}
+                        {(drillCompany.country || drillCompany.ai_enrichment?.country) && <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10, background: '#F1F5F9', color: '#475569' }}>📍 {drillCompany.country || drillCompany.ai_enrichment?.country}</span>}
                         {(drillCompany.ai_enrichment?.industry || drillCompany.industry) && <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: m.badgeBg, color: m.badgeText }}>{drillCompany.ai_enrichment?.industry || drillCompany.industry}</span>}
                         {drillCompany.ai_enrichment?.size && <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10, background: '#F1F5F9', color: '#475569' }}>👥 {drillCompany.ai_enrichment.size}</span>}
                         {drillCompany.ai_enrichment?.digital_maturity && (
@@ -460,23 +445,21 @@ export default function CompanyMapPage() {
                       </div>
                     </div>
 
-                    <div style={{ padding: '12px 16px', maxHeight: 600, overflowY: 'auto' }}>
-                      {/* Overview */}
+                    <div style={{ padding: '12px 14px', maxHeight: 520, overflowY: 'auto' }}>
                       {drillCompany.ai_enrichment?.overview && (
-                        <div style={{ marginBottom: 14 }}>
+                        <div style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 10, fontWeight: 700, color: m.textMid, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 5 }}>Overview</div>
                           <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.6 }}>{drillCompany.ai_enrichment.overview}</div>
                         </div>
                       )}
 
-                      {/* Tech stack */}
-                      {(drillCompany.ai_enrichment?.tech_stack||[]).length > 0 && (
-                        <div style={{ marginBottom: 14 }}>
+                      {(drillCompany.ai_enrichment?.tech_stack || []).length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 10, fontWeight: 700, color: m.textMid, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 5 }}>Tech stack</div>
                           <div>
-                            {drillCompany.ai_enrichment.tech_stack.map((t,i) => (
+                            {drillCompany.ai_enrichment.tech_stack.map((t, i) => (
                               <span key={i} onClick={() => setTechFilter(t === techFilter ? '' : t)}
-                                style={{ padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: t === techFilter ? '#7C3AED' : m.badgeBg, color: t === techFilter ? '#fff' : m.badgeText, display: 'inline-block', margin: '2px', cursor: 'pointer' }}>
+                                style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: t === techFilter ? '#7C3AED' : m.badgeBg, color: t === techFilter ? '#fff' : m.badgeText, display: 'inline-block', margin: '2px', cursor: 'pointer' }}>
                                 {t}
                               </span>
                             ))}
@@ -484,37 +467,32 @@ export default function CompanyMapPage() {
                         </div>
                       )}
 
-                      {/* No enrichment */}
                       {!drillCompany.ai_enriched_at && (
-                        <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 8, padding: '8px 12px', marginBottom: 14, fontSize: 11, color: '#92600A' }}>
-                          ✦ Not yet AI enriched
+                        <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 7, padding: '7px 10px', marginBottom: 12, fontSize: 11, color: '#92600A' }}>
+                          ✦ Not yet enriched — go to AI Enrichment
                         </div>
                       )}
 
-                      {/* Contacts */}
-                      <div style={{ fontSize: 10, fontWeight: 700, color: m.textMid, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>
-                        Contacts
+                      <div style={{ fontSize: 10, fontWeight: 700, color: m.textMid, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>
+                        Contacts {contactLoading ? '…' : `(${contacts.length})`}
                       </div>
                       {contactLoading ? (
                         <div style={{ fontSize: 11, color: '#94A3B8' }}>Loading…</div>
                       ) : contacts.length === 0 ? (
                         <div style={{ fontSize: 11, color: '#94A3B8' }}>No named contacts linked</div>
-                      ) : contacts.map(c => {
-                        const ic = IMP_CONFIG[c.importance];
-                        return (
-                          <div key={c.id} style={{ background: '#F8FAFC', border: '1px solid #E4E8F0', borderRadius: 8, padding: '8px 10px', marginBottom: 6 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                              {ic && <span title={c.importance} style={{ fontSize: 11 }}>{ic.label}</span>}
-                              <div style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contact}</div>
-                            </div>
-                            {c.role  && <div style={{ fontSize: 10, color: '#64748B', marginBottom: 3 }}>{c.role}</div>}
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                              {c.email    && <a href={`mailto:${c.email}`}    style={{ fontSize: 10, color: m.accent }}>✉ {c.email}</a>}
-                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: '#0A66C2' }}>in</a>}
-                            </div>
+                      ) : contacts.map(c => (
+                        <div key={c.id} style={{ background: '#F8FAFC', border: '1px solid #E4E8F0', borderRadius: 7, padding: '7px 10px', marginBottom: 5 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                            {IMP[c.importance] && <span style={{ fontSize: 11 }}>{IMP[c.importance]}</span>}
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contact}</span>
                           </div>
-                        );
-                      })}
+                          {c.role && <div style={{ fontSize: 10, color: '#64748B', marginBottom: 2 }}>{c.role}</div>}
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {c.email    && <a href={`mailto:${c.email}`}    style={{ fontSize: 10, color: m.accent }}>✉ {c.email}</a>}
+                            {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: '#0A66C2' }}>in</a>}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </>
                 )}
