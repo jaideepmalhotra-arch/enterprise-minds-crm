@@ -41,7 +41,7 @@ const MODULES = [
       { to:'/sales/dashboard', label:'Team Dashboard',  icon:'⊞' },
       { to:'/sales/analytics', label:'Analytics',       icon:'▦' },
       { to:'/sales/activity',  label:'Activity Feed',   icon:'◎' },
-      { to:'/sales/territory', label:'Territory Map',   icon:'🌍', planned:true },
+      { to:'/sales/company-map', label:'Company Map',   icon:'🗺' },
       { to:'/sales/digest',    label:'Rep Digest',      icon:'📧', planned:true },
     ],
   },
