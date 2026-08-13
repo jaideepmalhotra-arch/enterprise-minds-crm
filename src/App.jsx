@@ -21,6 +21,7 @@ import AnalyticsPage    from './pages/Analytics.jsx';
 
 import AIEnrichmentPage from './pages/AIEnrichment.jsx';
 import CompaniesPage    from './pages/Companies.jsx';
+import CompanyMapPage   from './pages/CompanyMap.jsx';
 import {
   LeadScoringPage, DataExportPage,
   CampaignsPage, EmailSequencesPage, WhatsAppPage,
@@ -49,6 +50,7 @@ const PAGE_META = {
   '/sales/dashboard':    { title:'Team Dashboard',     sub:'KPIs · quota progress · rep breakdown' },
   '/sales/analytics':    { title:'Analytics',          sub:'Country · source · pipeline · velocity' },
   '/sales/activity':     { title:'Activity Feed',      sub:'All team actions · chronological' },
+  '/sales/company-map':   { title:'Company Map',         sub:'Country distribution · tech stack filter · company drill-down' },
   '/sales/territory':    { title:'Territory Map',      sub:'Lead density by country · rep territories' },
   '/sales/digest':       { title:'Rep Digest',         sub:'Weekly automated performance email' },
   '/sales/settings':     { title:'Settings & Audit',   sub:'Reps · quotas · audit log · config' },
@@ -114,6 +116,7 @@ function Layout() {
           <Route path="/sales/campaigns"     element={<CampaignsPage />} />
           <Route path="/sales/sequences"     element={<EmailSequencesPage />} />
           <Route path="/sales/whatsapp"      element={<WhatsAppPage />} />
+          <Route path="/sales/company-map"    element={<CompanyMapPage />} />
           <Route path="/sales/territory"     element={<TerritoryMapPage />} />
           <Route path="/sales/digest"        element={<RepDigestPage />} />
           <Route path="/sales/notifications" element={<NotificationsPage />} />
