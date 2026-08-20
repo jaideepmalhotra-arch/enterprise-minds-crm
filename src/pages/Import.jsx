@@ -116,11 +116,10 @@ function autoMap(headers) {
   map.email = findExact(['email']);
 
   // Phone — prefer Work Direct, then Mobile, then First Phone, then Corporate
-  map.phone = findExact(['work direct phone'])
-    ?? findExact(['mobile phone'])
-    ?? findExact(['first phone'])
-    ?? findExact(['corporate phone'])
-    ?? findPartial(['direct phone', 'mobile', 'phone']);
+  // Capture all available phone numbers
+  map.phone  = findExact(['work direct phone']) ?? findExact(['first phone']) ?? findPartial(['direct phone']);
+  map.phone2 = findExact(['mobile phone']) ?? findExact(['corporate phone']);
+  map.phone3 = findExact(['home phone']) ?? findExact(['other phone']);
 
   map.role      = findExact(['title']) ?? findPartial(['job title', 'role', 'position']);
   map.country   = findExact(['country']);
@@ -253,8 +252,13 @@ export default function ImportPage() {
         }
 
         const email    = get('email');
-        const rawPhone = get('phone') || null;
-        const phone    = rawPhone ? rawPhone.replace(/^['+\s]+/, '').trim() || null : null;
+        const rawPhone  = get('phone')  || null;
+        const rawPhone2 = get('phone2') || null;
+        const rawPhone3 = get('phone3') || null;
+        const cleanPhone = (p) => p ? p.replace(/^['+\s]+/, '').trim() || null : null;
+        const phone  = cleanPhone(rawPhone);
+        const phone2 = cleanPhone(rawPhone2);
+        const phone3 = cleanPhone(rawPhone3);
         const linkedin = get('linkedin');
         const role     = get('role');
         const country  = normalizeCountry(get('country'));
@@ -264,7 +268,7 @@ export default function ImportPage() {
 
         stagingRows.push({
           import_batch_id: bid,
-          company, contact, role, email, phone, linkedin,
+          company, contact, role, email, phone, phone2, phone3, linkedin,
           country, city: get('city'),
           website: get('website'),
           industry, source: get('source') || (mode === 'exhibitors' ? expo : 'Apollo'),
@@ -411,9 +415,11 @@ export default function ImportPage() {
                 {file?.name} · {rawRows.length.toLocaleString()} rows · {isApolloFile(headers) ? '✦ Apollo detected' : 'Standard format'}
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
-                {['company','contact','email','phone','role','country','city','linkedin','website','industry','source'].map(field => (
+                {['company','contact','email','phone','phone2','phone3','role','country','city','linkedin','website','industry','source'].map(field => (
                   <div key={field}>
-                    <div style={{ fontSize:10, fontWeight:600, color:m.textMid, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>{field}</div>
+                    <div style={{ fontSize:10, fontWeight:600, color:m.textMid, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>
+                      {field === 'phone' ? 'Phone 1 (Work/Direct)' : field === 'phone2' ? 'Phone 2 (Mobile)' : field === 'phone3' ? 'Phone 3 (Other)' : field}
+                    </div>
                     <select value={mapping[field]??''} onChange={e => setMapping(p=>({...p,[field]:e.target.value===''?undefined:Number(e.target.value)}))}
                       style={{ width:'100%', border:`1px solid ${m.border}`, borderRadius:6, padding:'5px 8px', fontSize:11, background:'#fff', fontFamily:'inherit' }}>
                       <option value="">— skip —</option>
