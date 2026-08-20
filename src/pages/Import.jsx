@@ -109,9 +109,8 @@ function autoMap(headers) {
   // Apollo-specific exact matches first
   map._firstname = findExact(['first name', 'firstname']);
   map._lastname  = findExact(['last name', 'lastname']);
-  map.company    = findExact(['company name for emails']) !== undefined
-    ? findPartial(['company name for emails'])
-    : findExact(['company']) ?? findPartial(['company name', 'company']);
+  // Apollo has both 'Company' and 'Company Name for Emails' — always prefer plain 'Company'
+  map.company = findExact(['company']) ?? findPartial(['company name', 'company']);
 
   // Email — must be 'Email' exactly, not 'Company Name for Emails'
   map.email = findExact(['email']);
