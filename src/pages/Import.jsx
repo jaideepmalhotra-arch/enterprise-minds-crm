@@ -91,21 +91,47 @@ function isApolloFile(headers) {
 
 function autoMap(headers) {
   const map = {};
-  const hl = headers.map(h => h.toLowerCase());
-  const find = (terms) => { const i = hl.findIndex(h => terms.some(t => h.includes(t))); return i >= 0 ? i : undefined; };
-  map.company   = find(['company name','company']);
-  map.email     = find(['email']);
-  map.phone     = find(['work direct phone','direct phone','phone','mobile']);
-  map.country   = find(['country']);
-  map.city      = find(['city']);
-  map.linkedin  = find(['linkedin url','linkedin']);
-  map.website   = find(['website','web site','url']);
-  map.industry  = find(['industry','sector']);
-  map.source    = find(['source','lead source']);
-  map.role      = find(['title','job title','role','position']);
-  map._firstname = find(['first name','firstname']);
-  map._lastname  = find(['last name','lastname']);
-  map.contact   = find(['contact','full name','name']);
+  const hl = headers.map(h => h.toLowerCase().trim());
+
+  // Exact match first, then partial
+  const findExact = (terms) => {
+    for (const t of terms) {
+      const i = hl.findIndex(h => h === t.toLowerCase());
+      if (i >= 0) return i;
+    }
+    return undefined;
+  };
+  const findPartial = (terms) => {
+    const i = hl.findIndex(h => terms.some(t => h.includes(t.toLowerCase())));
+    return i >= 0 ? i : undefined;
+  };
+
+  // Apollo-specific exact matches first
+  map._firstname = findExact(['first name', 'firstname']);
+  map._lastname  = findExact(['last name', 'lastname']);
+  map.company    = findExact(['company name for emails']) !== undefined
+    ? findPartial(['company name for emails'])
+    : findExact(['company']) ?? findPartial(['company name', 'company']);
+
+  // Email — must be 'Email' exactly, not 'Company Name for Emails'
+  map.email = findExact(['email']);
+
+  // Phone — prefer Work Direct, then Mobile, then First Phone, then Corporate
+  map.phone = findExact(['work direct phone'])
+    ?? findExact(['mobile phone'])
+    ?? findExact(['first phone'])
+    ?? findExact(['corporate phone'])
+    ?? findPartial(['direct phone', 'mobile', 'phone']);
+
+  map.role      = findExact(['title']) ?? findPartial(['job title', 'role', 'position']);
+  map.country   = findExact(['country']);
+  map.city      = findExact(['city']);
+  map.linkedin  = findExact(['person linkedin url']) ?? findPartial(['linkedin url', 'linkedin']);
+  map.website   = findExact(['website']) ?? findPartial(['web site', 'url']);
+  map.industry  = findExact(['industry']) ?? findPartial(['sector']);
+  map.source    = findExact(['primary email source']) ?? findPartial(['source', 'lead source']);
+  map.contact   = findExact(['contact']) ?? findPartial(['full name']);
+
   return map;
 }
 
@@ -228,7 +254,8 @@ export default function ImportPage() {
         }
 
         const email    = get('email');
-        const phone    = get('phone')?.replace(/^'+/,'').trim() || null;
+        const rawPhone = get('phone') || null;
+        const phone    = rawPhone ? rawPhone.replace(/^['+\s]+/, '').trim() || null : null;
         const linkedin = get('linkedin');
         const role     = get('role');
         const country  = normalizeCountry(get('country'));
