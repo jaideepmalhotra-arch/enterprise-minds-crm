@@ -219,7 +219,9 @@ export default function AIEnrichmentPage() {
         ai_enrichment:  enrichData,
         ai_enriched_at: new Date().toISOString(),
         industry:       item.result.industry || item.company.industry || null,
-        country:        item.result.headquarters?.split(',').pop()?.trim() || item.company.country || null,
+        country:        item.result.country || 
+                        item.result.headquarters?.split(',').filter(p => p.trim().length > 2).pop()?.trim().replace(/<[^>]*>/g,'').trim() || 
+                        item.company.country || null,
         size:           item.result.size || null,
       }).eq('id', item.company.id);
 
