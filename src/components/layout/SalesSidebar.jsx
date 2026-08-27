@@ -55,6 +55,18 @@ const MODULES = [
       { to:'/sales/integrations',   label:'Integrations',     icon:'⚡', planned:true },
     ],
   },
+  {
+    id:'deals', label:'Deal CRM', icon:'💼',
+    colorText:'#6EE7B7', colorBg:'rgba(5,150,105,.25)', badgeBg:'rgba(5,150,105,.2)',
+    activeBorder:'#6EE7B7',
+    items:[
+      { to:'/deals',           label:'Dashboard',  icon:'📊' },
+      { to:'/deals/pipeline',  label:'Deals',      icon:'🏷' },
+      { to:'/deals/leads',     label:'Leads',      icon:'👤' },
+      { to:'/deals/accounts',  label:'Accounts',   icon:'🏢' },
+      { to:'/deals/settings',  label:'Settings',   icon:'⚙' },
+    ],
+  },
 ];
 
 function fmt(n) { if (!n) return null; if (n>=1000) return (n/1000).toFixed(1).replace('.0','')+'k'; return String(n); }
