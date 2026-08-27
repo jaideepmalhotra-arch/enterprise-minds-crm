@@ -22,6 +22,13 @@ import AnalyticsPage    from './pages/Analytics.jsx';
 import AIEnrichmentPage from './pages/AIEnrichment.jsx';
 import CompaniesPage    from './pages/Companies.jsx';
 import CompanyMapPage   from './pages/CompanyMap.jsx';
+import DealDashboard from './pages/deal-crm/DealDashboard.jsx';
+import DealKanban    from './pages/deal-crm/DealKanban.jsx';
+import DealDetail    from './pages/deal-crm/DealDetail.jsx';
+import DealLeads     from './pages/deal-crm/DealLeads.jsx';
+import DealAccounts  from './pages/deal-crm/DealAccounts.jsx';
+import DealSettings  from './pages/deal-crm/DealSettings.jsx';
+
 import {
   LeadScoringPage, DataExportPage,
   CampaignsPage, EmailSequencesPage, WhatsAppPage,
@@ -53,6 +60,12 @@ const PAGE_META = {
   '/sales/company-map':   { title:'Company Map',         sub:'Country distribution · tech stack filter · company drill-down' },
   '/sales/territory':    { title:'Territory Map',      sub:'Lead density by country · rep territories' },
   '/sales/digest':       { title:'Rep Digest',         sub:'Weekly automated performance email' },
+  '/deals':              { title:'Deal Dashboard',   sub:'Pipeline KPIs · action feed · rotting deal alerts' },
+  '/deals/pipeline':     { title:'Deals',            sub:'Kanban board · custom fields · rotting deal flags' },
+  '/deals/pipeline/:id': { title:'Deal detail',      sub:'Stage tracker · activities · custom fields · contacts' },
+  '/deals/leads':        { title:'Deal Leads',        sub:'Pre-qualified leads · convert to deal' },
+  '/deals/accounts':     { title:'Accounts',          sub:'Account-level view · linked deals' },
+  '/deals/settings':     { title:'Deal CRM Settings', sub:'Custom fields · stage templates · users · email sync' },
   '/sales/settings':     { title:'Settings & Audit',   sub:'Reps · quotas · audit log · config' },
   '/sales/notifications':{ title:'Notifications',      sub:'Browser push alerts for tasks and campaigns' },
   '/sales/integrations': { title:'Integrations',       sub:'Apollo · JustCall · LinkedIn · Resend' },
@@ -121,6 +134,12 @@ function Layout() {
           <Route path="/sales/digest"        element={<RepDigestPage />} />
           <Route path="/sales/notifications" element={<NotificationsPage />} />
           <Route path="/sales/integrations"  element={<IntegrationsPage />} />
+          <Route path="/deals"              element={<DealDashboard />} />
+          <Route path="/deals/pipeline"     element={<DealKanban />} />
+          <Route path="/deals/pipeline/:id" element={<DealDetail />} />
+          <Route path="/deals/leads"        element={<DealLeads />} />
+          <Route path="/deals/accounts"     element={<DealAccounts />} />
+          <Route path="/deals/settings"     element={<DealSettings />} />
           <Route path="*"                    element={<HomePage />} />
         </Routes>
       </main>
