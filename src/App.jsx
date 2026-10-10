@@ -28,6 +28,8 @@ import DealDetail    from './pages/deal-crm/DealDetail.jsx';
 import DealLeads     from './pages/deal-crm/DealLeads.jsx';
 import DealAccounts  from './pages/deal-crm/DealAccounts.jsx';
 import DealSettings  from './pages/deal-crm/DealSettings.jsx';
+import TeamRoomPage  from './pages/TeamRoom.jsx';
+import AgentRunnerPage from './pages/AgentRunner.jsx';
 
 import {
   LeadScoringPage, DataExportPage,
@@ -66,6 +68,8 @@ const PAGE_META = {
   '/deals/leads':        { title:'Deal Leads',        sub:'Pre-qualified leads · convert to deal' },
   '/deals/accounts':     { title:'Accounts',          sub:'Account-level view · linked deals' },
   '/deals/settings':     { title:'Deal CRM Settings', sub:'Custom fields · stage templates · users · email sync' },
+  '/sales/team-room':    { title:'Team Room',          sub:'Realtime team chat · live MIS · AI briefings' },
+  '/sales/ai-agent':     { title:'AI Sales Agent',     sub:'Hygiene → assign → enrich → gap tasks → campaign' },
   '/sales/settings':     { title:'Settings & Audit',   sub:'Reps · quotas · audit log · config' },
   '/sales/notifications':{ title:'Notifications',      sub:'Browser push alerts for tasks and campaigns' },
   '/sales/integrations': { title:'Integrations',       sub:'Apollo · JustCall · LinkedIn · Resend' },
@@ -140,6 +144,8 @@ function Layout() {
           <Route path="/deals/leads"        element={<DealLeads />} />
           <Route path="/deals/accounts"     element={<DealAccounts />} />
           <Route path="/deals/settings"     element={<DealSettings />} />
+          <Route path="/sales/team-room"     element={<TeamRoomPage />} />
+          <Route path="/sales/ai-agent"      element={<AgentRunnerPage />} />
           <Route path="*"                    element={<HomePage />} />
         </Routes>
       </main>
