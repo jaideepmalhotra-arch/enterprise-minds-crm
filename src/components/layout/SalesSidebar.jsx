@@ -56,6 +56,15 @@ const MODULES = [
     ],
   },
   {
+    id:'team', label:'Team & AI', icon:'🤖',
+    colorText:'#818CF8', colorBg:'rgba(99,102,241,.25)', badgeBg:'rgba(99,102,241,.2)',
+    activeBorder:'#818CF8',
+    items:[
+      { to:'/sales/team-room', label:'Team Room',      icon:'💬' },
+      { to:'/sales/ai-agent',  label:'AI Sales Agent', icon:'✦' },
+    ],
+  },
+  {
     id:'deals', label:'Deal CRM', icon:'💼',
     colorText:'#6EE7B7', colorBg:'rgba(5,150,105,.25)', badgeBg:'rgba(5,150,105,.2)',
     activeBorder:'#6EE7B7',
