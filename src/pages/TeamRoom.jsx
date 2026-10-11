@@ -86,10 +86,28 @@ function Briefing({ mis }) {
   );
 }
 
-function Avatar({ init, color, size = 30 }) {
+// Pick dark or white text so initials stay readable on any badge colour
+function textOn(bg) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(bg || '');
+  if (!m) return '#fff';
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.6 ? '#0F172A' : '#fff';
+}
+
+// Max two letters: use stored initials if short, otherwise derive from the name
+function initialsOf(init, name) {
+  const i = (init || '').trim();
+  if (i && i.length <= 3) return i.toUpperCase();
+  const parts = (name || i).trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || parts[0]?.[1] || '')).toUpperCase();
+}
+
+function Avatar({ init, name, color, text, size = 30 }) {
+  const bg = color || '#1A56DB';
   return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: color || '#1A56DB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.33, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-      {init}
+    <div style={{ width: size, height: size, borderRadius: '50%', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.36, fontWeight: 700, color: text || textOn(bg), flexShrink: 0 }}>
+      {initialsOf(init, name)}
     </div>
   );
 }
@@ -103,7 +121,7 @@ function Bubble({ msg, me }) {
     <div style={{ display: 'flex', gap: 10, margin: '6px 0', flexDirection: isMe ? 'row-reverse' : 'row' }}>
       {isAI
         ? <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(135deg,#6366F1,#8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>🤖</div>
-        : <Avatar init={msg.sender_init} color={msg.sender_color} />}
+        : <Avatar init={msg.sender_init} name={msg.sender_name} color={msg.sender_color} />}
       <div style={{ maxWidth: '65%' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3, flexDirection: isMe ? 'row-reverse' : 'row' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: isAI ? '#818CF8' : msg.sender_color }}>{msg.sender_name}</span>
@@ -132,7 +150,7 @@ function WhoAreYou({ reps, onPick }) {
         {reps.length === 0 && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)' }}>No active reps found in Settings.</div>}
         {reps.map(r => (
           <button key={r.id} onClick={() => onPick(r)} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 10px', marginBottom: 6, borderRadius: 8, border: '1px solid rgba(255,255,255,.08)', background: 'rgba(255,255,255,.04)', color: '#fff', cursor: 'pointer', fontSize: 13, textAlign: 'left' }}>
-            <Avatar init={r.initials} color={r.color_bg} size={26} />
+            <Avatar init={r.initials} name={r.name} color={r.color_bg} text={r.color_text} size={26} />
             {r.name}
           </button>
         ))}
@@ -159,7 +177,7 @@ export default function TeamRoom() {
   const inputRef  = useRef(null);
 
   function pickMe(rep) {
-    const id = { id: rep.id, name: rep.name, init: rep.initials || rep.name.slice(0, 2).toUpperCase(), color: rep.color_bg || '#1A56DB' };
+    const id = { id: rep.id, name: rep.name, init: initialsOf(rep.initials, rep.name), color: rep.color_bg || '#1A56DB' };
     try { localStorage.setItem(ID_KEY, JSON.stringify(id)); } catch {}
     setMe(id);
   }
@@ -239,7 +257,7 @@ export default function TeamRoom() {
             return (
               <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 14px', opacity: isOn ? 1 : 0.5 }}>
                 <div style={{ position: 'relative' }}>
-                  <Avatar init={r.initials} color={r.color_bg} size={22} />
+                  <Avatar init={r.initials} name={r.name} color={r.color_bg} text={r.color_text} size={22} />
                   {isOn && <div style={{ position: 'absolute', bottom: -1, right: -1, width: 7, height: 7, borderRadius: '50%', background: '#10B981', border: '1.5px solid #0F172A' }} />}
                 </div>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,.7)' }}>{r.name}{me?.id === r.id ? ' (you)' : ''}</span>
